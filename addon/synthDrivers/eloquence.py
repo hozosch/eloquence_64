@@ -659,8 +659,8 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 					_(
 						# Translators: Text of a message dialog when updating a dictionary
 						"Dictionary update successful!\n\n"
-						"â€¢ Total updates: {updates_count}\n"
-						"â€¢ Dictionary files: {new_files}\n\n"
+						"Ã¢â‚¬Â¢ Total updates: {updates_count}\n"
+						"Ã¢â‚¬Â¢ Dictionary files: {new_files}\n\n"
 						"Note: CP1252 encoding enforced; some accents may have been stripped for compatibility."
 					).format(updates_count=updates_count, new_files=new_files),
 					# Translators: Title of a message dialog when updating a dictionary
@@ -671,8 +671,8 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 				wx.MessageBox(
 					# Translators: Text of a message dialog when updating a dictionary
 					_("No new updates found. Your dictionaries are already up to date."),
-					# Translators: Title of a message dialog when updating a dictionary_("Eloquence"),
-					
+					# Translators: Title of a message dialog when updating a dictionary
+					_("Eloquence"),
 					wx.OK | wx.ICON_INFORMATION,
 				)
 
@@ -978,9 +978,12 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 	# 1: Standard timing with a p1 pause at the end of speech blocks only.
 	# 2: Injects p1 at all punctuation for consistent Modern Shortening.
 	_pauseModes = {
-		"0": StringParameterInfo("0", "Do not shorten"),
-		"1": StringParameterInfo("1", "Shorten at end only"),
-		"2": StringParameterInfo("2", "Shorten all pauses"),
+		# Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
+		"0": StringParameterInfo("0", _("Do not shorten")),
+		# Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
+		"1": StringParameterInfo("1", _("Shorten at end only")),
+		# Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
+		"2": StringParameterInfo("2", _("Shorten all pauses")),
 	}
 
 	def _get_availablePausemodes(self):
