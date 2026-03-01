@@ -7,15 +7,13 @@ import logging
 import wx
 import re
 from io import BytesIO
+import addonHandler
+
+addonHandler.initTranslation()
 
 log = logging.getLogger(__name__)
 
-try:
-	from languageHandler import getLanguage
-	_ = wx.GetTranslation
-except ImportError:
-	def _(text):
-		return text
+
 
 class UpdateChangesDialog(wx.Dialog):
 	def __init__(self, parent, changes, latest_version):

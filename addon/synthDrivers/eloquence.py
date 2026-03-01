@@ -62,8 +62,8 @@ from . import _eloquence
 from . import _text_preprocessing
 from collections import OrderedDict
 import unicodedata
-
 import addonHandler
+
 addonHandler.initTranslation()
 
 log = logging.getLogger(__name__)
