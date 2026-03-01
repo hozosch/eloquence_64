@@ -1,0 +1,9 @@
+# Normalize line endings to LF on commit, keep LF on checkout
+* text=auto eol=lf
+
+# Binary files that should never be normalized
+*.exe binary
+*.dll binary
+*.pyd binary
+*.syn binary
+*.nvda-addon binary

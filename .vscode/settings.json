@@ -1,0 +1,17 @@
+{
+	"editor.accessibilitySupport": "on",
+	"ruff.enable": true,
+	"python.analysis.extraPaths": [
+		"../nvda/source"
+	],
+	"python.autoComplete.extraPaths": [
+		"../nvda/source"
+	],
+	"files.insertFinalNewline": true,
+	"files.trimFinalNewlines": true,
+	"files.eol": "\n",
+	"editor.insertSpaces": false,
+	"[python]": {
+		"editor.defaultFormatter": "charliermarsh.ruff"
+	}
+}
