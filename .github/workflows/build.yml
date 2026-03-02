@@ -64,12 +64,18 @@ jobs:
       - name: Build addon
         run: scons && scons pot
 
-      - name: Upload workflow artifacts
+      - name: Upload add-on artifact
         uses: actions/upload-artifact@v7
         with:
-          path: |
-            *.nvda-addon
-            *.pot
+          name: nvda-addon
+          path: "*.nvda-addon"
+          archive: false
+      
+      - name: Upload pot artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pot-file
+          path: "*.pot"
           archive: false
 
       - name: Upload to release
