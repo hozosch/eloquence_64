@@ -20,6 +20,30 @@ env.Append(**buildVars.addon_info)
 
 addonDir = Path("addon")
 
+# --- Auto-copy _multiprocessing.pyd from system Python --------------------
+
+_mp_eci_dir = addonDir / "synthDrivers" / "eloquence"
+_mp_dest = _mp_eci_dir / "_multiprocessing.pyd"
+if not _mp_dest.exists():
+	import sysconfig, shutil
+	_dlls_dir = Path(sysconfig.get_paths()["platlib"]).parent / "DLLs"
+	_mp_src = _dlls_dir / "_multiprocessing.pyd"
+	if not _mp_src.exists():
+		# Fallback: try stdlib path
+		_dlls_dir = Path(sysconfig.get_paths()["stdlib"]).parent / "DLLs"
+		_mp_src = _dlls_dir / "_multiprocessing.pyd"
+	if _mp_src.exists():
+		shutil.copy2(str(_mp_src), str(_mp_dest))
+		print(f"Copied _multiprocessing.pyd from {_mp_src}")
+	else:
+		print(
+			"ERROR: _multiprocessing.pyd not found in Python's DLLs directory.\n"
+			f"Searched: {_dlls_dir}\n"
+			"Ensure you are running with a CPython installation that includes this extension.",
+			file=sys.stderr,
+		)
+		Exit(1)
+
 # --- Compile translations (.po -> .mo) -------------------------------------
 
 import glob
