@@ -1,25 +1,22 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the 'IBMTTS' package.
+# This file is distributed under the same license as the Eloquence package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
+#, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: Eloquence\n"
+"Project-Id-Version: Eloquence v16\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-03-02 16:18+0100\n"
-"PO-Revision-Date: 2026-03-04 14:57+0100\n"
-"Last-Translator: \n"
+"POT-Creation-Date: 2026-03-02 16:27+0000\n"
+"PO-Revision-Date: 2026-03-05 18:39+0100\n"
+"Last-Translator: Karl Eick <hozosch@web.de>\n"
 "Language-Team: \n"
-"Language: de_DE\n"
+"Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=2; plural=(n != 1);\n"
-"X-Generator: Poedit 3.8\n"
-"X-Poedit-Flags-xgettext: --add-comments=Translators:\n"
-"X-Poedit-Basepath: ../../../..\n"
-"X-Poedit-SearchPath-0: .\n"
+"X-Generator: Poedit 3.6\n"
 
 #. Translators: Name of the category for this add-on in the settings dialog
 #. Translators: Title of a message dialog when updating a dictionary
@@ -39,12 +36,13 @@ msgstr "Nach Updates suchen"
 #. Translators: Label of a button in the Eloquence category of the settings dialog
 #: addon\synthDrivers\eloquence.py:155
 msgid "Copy Helper to System Config (for Logon Screen)"
-msgstr "Helper in die Systemkonfiguration kopieren (für Anmeldebildschirm)"
+msgstr ""
+"Hilfsprozess in die Systemkonfiguration kopieren (für den Anmeldebildschirm)"
 
 #. Translators: Label of a button in the Eloquence category of the settings dialog
 #: addon\synthDrivers\eloquence.py:166
 msgid "Check for Add-on Updates"
-msgstr "Sucht nach Add-on-Updates"
+msgstr "Nach Erweiterungs-Updates suchen"
 
 #. Translators: Text of a message dialog when copying the helper to system config
 #: addon\synthDrivers\eloquence.py:188
@@ -54,10 +52,10 @@ msgid ""
 "Please go to NVDA Settings > General and click 'Use currently saved settings "
 "during sign-in' first to initialize folders."
 msgstr ""
-"Eloquence-Ordner nicht in systemConfig gefunden.\\n\n"
-"\\n\n"
+"Der Ordner „Eloquence“ wurde in der Systemkonfiguration nicht gefunden.\n"
+"\n"
 "Bitte gehen Sie zu NVDA-Einstellungen > Allgemein und klicken Sie zunächst "
-"auf „Aktuell gespeicherte Einstellungen beim Anmelden verwenden“, um die "
+"auf „Aktuell gespeicherte Einstellungen bei der Anmeldung verwenden“, um die "
 "Ordner zu initialisieren."
 
 #. Translators: Title of a message dialog when copying the helper to system config
@@ -72,7 +70,7 @@ msgid ""
 "Source file not found at:\n"
 "{source_file}"
 msgstr ""
-"Quelldatei nicht gefunden unter:\\n\n"
+"Quelldatei nicht gefunden:\n"
 "{source_file}"
 
 #. Translators: Title of a message dialog when copying the helper to system config
@@ -93,16 +91,16 @@ msgid ""
 "Eloquence should now load normally on logon screen, start-up, and other "
 "secure screens."
 msgstr ""
-"Eloquence_host32.exe wurde erfolgreich nach systemConfig kopiert!\\n\n"
-"\\n\n"
-"Eloquence sollte jetzt normal auf dem Anmeldebildschirm, beim Start und auf "
+"Eloquence_host32.exe wurde erfolgreich in die Systemkonfiguration kopiert!\n"
+"\n"
+"Eloquence sollte nun normal auf dem Anmeldebildschirm, beim Start und auf "
 "anderen sicheren Bildschirmen geladen werden."
 
 #. Translators: Title of a message dialog when copying the helper to system config
 #. Translators: Title of a message dialog when updating a dictionary
 #: addon\synthDrivers\eloquence.py:225 addon\synthDrivers\eloquence.py:678
 msgid "Success"
-msgstr "Erfolgreich"
+msgstr "Erfolg"
 
 #. Translators: Text of a message dialog when copying the helper to system config
 #: addon\synthDrivers\eloquence.py:232
@@ -130,38 +128,39 @@ msgstr ""
 #: addon\synthDrivers\eloquence.py:248
 #, python-brace-format
 msgid "An unexpected error occurred: {e}"
-msgstr "Ein unerwarteter Fehler ist aufgetreten: {e}"
+msgstr "Unerwarteter Fehler: {e}"
 
 #. Translators: Text of a message dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:267
 msgid "Update manager not found. Please reinstall the add-on."
-msgstr "Update-Manager nicht gefunden. Bitte installieren Sie das Add-on neu."
+msgstr ""
+"Update-Manager nicht gefunden. Bitte installieren Sie die Erweiterung neu."
 
 #. Translators: Text of a message dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:281
 #, python-brace-format
 msgid "Failed to load update manager: {e}"
-msgstr "Update-Manager konnte nicht geladen werden: {e}"
+msgstr "Laden des Update-Managers fehlgeschlagen: {e}"
 
 #. Translators: Title of a progress dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:294
 msgid "Checking for Updates"
-msgstr "Nach Updates suchen"
+msgstr "Suche nach updates"
 
 #. Translators: Message of a progress dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:296
 msgid "Connecting to GitHub..."
-msgstr "Verbindung zu GitHub herstellen..."
+msgstr "Mit GitHub verbinden..."
 
 #. Translators: Message of a progress dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:308
 msgid "Checking for updates..."
-msgstr "Suche nach Updates..."
+msgstr "Suche nach updates..."
 
 #. Translators: Message of a progress dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:318
 msgid "No updates available"
-msgstr "Keine Updates verfügbar"
+msgstr "Keine Updates vergübar"
 
 #. Translators: Text of a message dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:322
@@ -171,7 +170,7 @@ msgstr "Sie verwenden die neueste Version!"
 #. Translators: Title of a message dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:324
 msgid "Up to Date"
-msgstr "Auf dem neuesten Stand"
+msgstr "Bereits aktuell"
 
 #. Translators: Text of a message dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:331
@@ -180,7 +179,7 @@ msgstr "Update verfügbar!"
 
 #. Translators: Text of a message dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:338
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid ""
 "New version available: {latest_version}\n"
 "\n"
@@ -191,13 +190,13 @@ msgid ""
 "\n"
 "Would you like to download and review the update?"
 msgstr ""
-"Neue Version verfügbar: {latest_version}\\n\n"
-"\\n\n"
-"Aktuelle Version: {currVersion}\\n\n"
-"\\n\n"
-"Änderungsprotokoll:\\n\n"
-"{Änderungsprotokoll}\\n\n"
-"\\n\n"
+"Neue verfügbare Version: {latest_version}\n"
+"\n"
+"Derzeitige Version: {currVersion}\n"
+"\n"
+"Änderungsverlauf:\n"
+"{changelog}\n"
+"\n"
 "Möchten Sie das Update herunterladen und überprüfen?"
 
 #. Translators: Title of a message dialog when updating the add-on
@@ -218,12 +217,12 @@ msgstr "Herunterladen..."
 #. Translators: Text of a progress dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:374
 msgid "Extracting update..."
-msgstr "Update wird extrahiert..."
+msgstr "Update extrahieren..."
 
 #. Translators: Text of a progress dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:379
 msgid "Analyzing changes..."
-msgstr "Änderungen analysieren..."
+msgstr "Analysiere Änderungen..."
 
 #. Translators: Text of a message dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:391
@@ -233,7 +232,7 @@ msgstr "Update abgebrochen."
 #. Translators: Text of a progress dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:401
 msgid "Applying Update"
-msgstr "Update anwenden"
+msgstr "Update wird angewendet"
 
 #. Translators: Text of a progress dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:403
@@ -248,8 +247,8 @@ msgid ""
 "\n"
 "Please restart NVDA for changes to take effect."
 msgstr ""
-"Update auf {latest_version} erfolgreich angewendet!\\n\n"
-"\\n\n"
+"Update auf {latest_version} erfolgreich durchgeführt!\n"
+"\n"
 "Bitte starten Sie NVDA neu, damit die Änderungen wirksam werden."
 
 #. Translators: Title of a message dialog when updating the add-on
@@ -265,19 +264,19 @@ msgid ""
 "\n"
 "Your addon has not been modified."
 msgstr ""
-"Aktualisierung fehlgeschlagen: {e}\\n\n"
-"\\n\n"
-"Ihr Addon wurde nicht geändert."
+"Update fehlgeschlagen: {e}\n"
+"\n"
+"Ihre Erweiterung wurde nicht verändert."
 
 #. Translators: Title of a message dialog when updating the add-on
 #: addon\synthDrivers\eloquence.py:441
 msgid "Update Failed"
-msgstr "Aktualisierung fehlgeschlagen"
+msgstr "Updatefehler"
 
 #. Translators: Text of a message dialog when updating a dictionary
 #: addon\synthDrivers\eloquence.py:465
 msgid "Please select a dictionary first."
-msgstr "Bitte wählen Sie zunächst ein Wörterbuch aus."
+msgstr "Bitte wählen Sie zuerst ein Wörterbuch."
 
 #. Translators: Text of a message dialog when updating a dictionary
 #: addon\synthDrivers\eloquence.py:672
@@ -291,13 +290,13 @@ msgid ""
 "Note: CP1252 encoding enforced; some accents may have been stripped for "
 "compatibility."
 msgstr ""
-"Wörterbuchaktualisierung erfolgreich!\\n\n"
-"\\n\n"
-"• Gesamtzahl der Updates: {updates_count}\\n\n"
-"• Wörterbuchdateien: {new_files}\\n\n"
-"\\n\n"
-"Hinweis: CP1252-Kodierung erzwungen; Einige Akzente wurden möglicherweise "
-"aus Kompatibilitätsgründen entfernt."
+"Wörterbuch-Aktualisierung erfolgreich!\n"
+"\n"
+"• Gesamtzahl der Aktualisierungen: {updates_count}\n"
+"• Wörterbuchdateien: {new_files}\n"
+"\n"
+"Hinweis: CP1252-Kodierung erzwungen; einige Akzente wurden aus "
+"Kompatibilitätsgründen möglicherweise entfernt."
 
 #. Translators: Text of a message dialog when updating a dictionary
 #: addon\synthDrivers\eloquence.py:684
@@ -310,69 +309,69 @@ msgstr ""
 #: addon\synthDrivers\eloquence.py:693
 #, python-brace-format
 msgid "An error occurred while updating the dictionary: {e}"
-msgstr "Beim Aktualisieren des Wörterbuchs ist ein Fehler aufgetreten: {e}"
+msgstr "Ein Fehler ist beim Aktualisieren des Wörterbuchs aufgetreten: {e}"
 
 #. Translators: A synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:711
 msgid "Hea&d size"
-msgstr "Kopf- und Kopfgröße"
+msgstr "&Kopfgröße"
 
 #. Translators: A synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:713
 msgid "Rou&ghness"
-msgstr "Rauheit"
+msgstr "&Rauigkeit"
 
 #. Translators: A synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:715
 msgid "Breathi&ness"
-msgstr "Atmung"
+msgstr "&Behauchtheit"
 
 #. Translators: A synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:718
 msgid "Enable backquote voice &tags"
-msgstr "Aktivieren Sie Backquote-Sprach- und Tags"
+msgstr "Gravis-Sprachtags zulassen"
 
 #. Translators: A synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:721
 msgid "Enable &abbreviation dictionary"
-msgstr "&Abkürzungswörterbuch aktivieren"
+msgstr "&Abkürzungswörterbuch verwenden"
 
 #. Translators: A synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:723
 msgid "Enable phras&e prediction"
-msgstr "Aktivieren Sie die Phrasenvorhersage"
+msgstr "&Satzvorhersage einschalten"
 
 #. Translators: A synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:725
 msgid "&Pauses"
-msgstr "&Pausiert"
+msgstr "&pausen kürzen"
 
 #. Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:993
 msgid "Do not shorten"
-msgstr "Nicht kürzen"
+msgstr "Nie"
 
 #. Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:995
 msgid "Shorten at end only"
-msgstr "Nur am Ende kürzen"
+msgstr "Nur am Textende"
 
 #. Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:997
 msgid "Shorten all pauses"
-msgstr ""
+msgstr "Immer"
 
 #. Translators: Title of the Review Update Changes dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:19
 msgid "Review Update Changes"
-msgstr "Überprüfen Sie die Update-Änderungen"
+msgstr "Änderungen überprüfen"
 
 #. Translators: Text in the Review Update Changes dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:25
 #, python-brace-format
 msgid "Update to version {latest_version} includes the following changes:"
 msgstr ""
-"Das Update auf Version {latest_version} beinhaltet die folgenden Änderungen:"
+"Das Update auf Version {latest_version} enthält die folgenden Änderungen:"
 
 #. Translators: Column header in the Review Update Changes dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:31
@@ -402,13 +401,13 @@ msgstr "Löschen"
 #, python-brace-format
 msgid "Note: {n} local configuration/dictionary files will be preserved."
 msgstr ""
-"Hinweis: {n} lokale Konfigurations-/Wörterbuchdateien bleiben erhalten."
+"Note: {n} lokale Konfigurations- / Wörterbuchdateien werden beibehalten."
 
 #. Translators: Text in the progress dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:186
 #, python-brace-format
 msgid "Downloading update... {percent}%"
-msgstr "Update wird heruntergeladen... {percent}%"
+msgstr "Update herunterladen... {percent}%"
 
 #. Translators: Text in the progress dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:207
@@ -424,13 +423,13 @@ msgstr "Analyse abgeschlossen"
 #. Translators: Text in the progress dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:305
 msgid "No changes to apply"
-msgstr "Es sind keine Änderungen anzuwenden"
+msgstr "Keine Änderungen vorhanden"
 
 #. Translators: Text in the progress dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:314
 #, python-brace-format
 msgid "Applying: {path}"
-msgstr "Bewerben: {path}"
+msgstr "Anwenden: {path}"
 
 #. Translators: Text in the progress dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:336
