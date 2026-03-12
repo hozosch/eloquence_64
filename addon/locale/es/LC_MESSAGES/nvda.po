@@ -343,23 +343,23 @@ msgstr "Habilitar pr&edicción de frases"
 
 #. Translators: A synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:725
-msgid "&Pauses"
-msgstr "&Pausas"
+msgid "Shorten &pauses"
+msgstr "Acortar &pausas"
 
-#. Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
+#. Translators: An option in the "Shorten pauses" combo box in speech settings
 #: addon\synthDrivers\eloquence.py:993
-msgid "Do not shorten"
-msgstr "No acortar"
+msgid "Never"
+msgstr "Nunca"
 
-#. Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
+#. Translators: An option in the "Shorten pauses" combo box in speech settings
 #: addon\synthDrivers\eloquence.py:995
-msgid "Shorten at end only"
-msgstr "Acortar solo al final"
+msgid "At end of text only"
+msgstr "Solo al final del texto"
 
-#. Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
+#. Translators: An option in the "Shorten pauses" combo box in speech settings
 #: addon\synthDrivers\eloquence.py:997
-msgid "Shorten all pauses"
-msgstr "Acortar todas las pausas"
+msgid "Always"
+msgstr "Siempre"
 
 #. Translators: Title of the Review Update Changes dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:19

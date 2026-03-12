@@ -343,22 +343,22 @@ msgstr "&Satzvorhersage einschalten"
 
 #. Translators: A synth setting available in speech settings dialog
 #: addon\synthDrivers\eloquence.py:725
-msgid "&Pauses"
-msgstr "&pausen kürzen"
+msgid "Shorten &pauses"
+msgstr "&Pausen kürzen"
 
-#. Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
+#. Translators: An option in the "Shorten pauses" combo box in speech settings
 #: addon\synthDrivers\eloquence.py:993
-msgid "Do not shorten"
+msgid "Never"
 msgstr "Nie"
 
-#. Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
+#. Translators: An option in the "Shorten pauses" combo box in speech settings
 #: addon\synthDrivers\eloquence.py:995
-msgid "Shorten at end only"
+msgid "At end of text only"
 msgstr "Nur am Textende"
 
-#. Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
+#. Translators: An option in the "Shorten pauses" combo box in speech settings
 #: addon\synthDrivers\eloquence.py:997
-msgid "Shorten all pauses"
+msgid "Always"
 msgstr "Immer"
 
 #. Translators: Title of the Review Update Changes dialog used during add-on update.

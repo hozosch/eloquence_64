@@ -726,7 +726,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		# Translators: A synth setting available in speech settings dialog
 		BooleanDriverSetting("phrasePrediction", _("Enable phras&e prediction"), False),
 		# Translators: A synth setting available in speech settings dialog
-		DriverSetting("pauseMode", _("&Pauses"), defaultVal="0"),
+		DriverSetting("pauseMode", _("Shorten &pauses"), defaultVal="0"),
 	)
 	supportedCommands = {
 		IndexCommand,
@@ -994,12 +994,12 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 	# 1: Standard timing with a p1 pause at the end of speech blocks only.
 	# 2: Injects p1 at all punctuation for consistent Modern Shortening.
 	_pauseModes = {
-		# Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
-		"0": StringParameterInfo("0", _("Do not shorten")),
-		# Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
-		"1": StringParameterInfo("1", _("Shorten at end only")),
-		# Translators: One of the mode listed in the pause combobox synth setting available in speech settings dialog
-		"2": StringParameterInfo("2", _("Shorten all pauses")),
+		# Translators: An option in the "Shorten pauses" combo box in speech settings
+		"0": StringParameterInfo("0", _("Never")),
+		# Translators: An option in the "Shorten pauses" combo box in speech settings
+		"1": StringParameterInfo("1", _("At end of text only")),
+		# Translators: An option in the "Shorten pauses" combo box in speech settings
+		"2": StringParameterInfo("2", _("Always")),
 	}
 
 	def _get_availablePausemodes(self):
