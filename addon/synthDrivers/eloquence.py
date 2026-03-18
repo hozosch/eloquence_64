@@ -727,6 +727,9 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		BooleanDriverSetting("phrasePrediction", _("Enable phras&e prediction"), False),
 		# Translators: A synth setting available in speech settings dialog
 		DriverSetting("pauseMode", _("Shorten &pauses"), defaultVal="0"),
+		# Translators: A synth setting available in speech settings dialog
+		DriverSetting('sampleRate', _("&Sample rate"), defaultVal='1'),
+
 	)
 	supportedCommands = {
 		IndexCommand,
@@ -1010,6 +1013,59 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 
 	def _get_pauseMode(self):
 		return str(self._pause_mode)
+
+	def _get_availableSamplerates(self):
+		rates = {}
+		# Standard ECI rates
+		rates["0"] = StringParameterInfo("0", "8 kHz")
+		rates["1"] = StringParameterInfo("1", "11 kHz")
+		# High quality mode using the upsampler DLL
+		rates["2"] = StringParameterInfo("2", "44 kHz")
+		return rates
+
+	def _set_sampleRate(self, val):
+		try:
+			val = int(val)
+		except (ValueError, TypeError):
+			val = 1
+
+		if hasattr(self, "_sample_rate") and self._sample_rate == val:
+			return
+
+		self._sample_rate = val
+
+		# Change eloquence internal sample rate via host first
+		_eloquence.set_sample_rate(val)
+
+		# then stop and reset player
+		client = _eloquence._client
+		if not client:
+			return
+
+		self.cancel()
+
+		if client._audio_worker:
+			client._audio_worker.stop()
+			client._audio_worker.join(timeout=1)
+			client._audio_worker = None
+
+		if client._player:
+			try:
+				client._player.close()
+			except:
+				pass
+			client._player = None
+
+		# 3. reinitialize audio (takes new value from get_sample_rate())
+		client.initialize_audio()
+
+		# ensure the parameter reaches ECI.dll
+		# Parameter 5: 0 = 8kHz, 1 = 11kHz
+		eci_val = 0 if val == 0 else 1
+		_eloquence._client.set_param(5, eci_val)
+
+	def _get_sampleRate(self):
+		return str(self._sample_rate)
 
 	_backquoteVoiceTags = False
 	_ABRDICT = False
