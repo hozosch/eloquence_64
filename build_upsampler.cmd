@@ -8,7 +8,7 @@ if not exist C:\msys64\mingw64\bin\gcc.exe (
 )
 echo Building upsampler.dll...
 
-gcc -O3 -march=native -shared -o upsampler.dll upsampler.c                                      
+gcc -shared -o upsampler.dll upsampler.c                                      
 
 if %errorlevel% neq 0 (
     echo Build failed!
