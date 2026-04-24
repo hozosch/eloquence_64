@@ -1,7 +1,7 @@
 """32-bit host process for Eloquence synthesis.
 
 This module is executed as a separate helper process under a 32-bit
-    Python runtime.  It loads the ETI-Eloquence DLL directly and exposes a
+	Python runtime.  It loads the ETI-Eloquence DLL directly and exposes a
 simple RPC protocol over a length-prefixed pickle IPC channel so that
 64-bit NVDA builds can continue to make use of the original synthesizer.
 
@@ -21,6 +21,7 @@ import socket
 import struct
 import sys
 import threading
+import glob
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "eloquence"))
 from dataclasses import dataclass
@@ -146,11 +147,13 @@ def configure_logging(log_dir: Optional[str]) -> None:
 				pass
 		except OSError:
 			log_file = None
-	logging.basicConfig(
-		filename=log_file,
-		level=logging.ERROR,
-		format="%(asctime)s %(levelname)s %(message)s",
-	)
+		logging.basicConfig(
+			filename=log_file,
+			level=logging.ERROR,
+			format="%(asctime)s %(levelname)s %(message)s",
+		)
+
+		LOGGER.setLevel(logging.DEBUG)
 
 
 @dataclass
@@ -260,19 +263,45 @@ class EloquenceRuntime:
 			self._dll.eciSetParam(handle, 41, 1)
 
 	def _load_dictionaries(self) -> None:
-		dictionary_dir = get_short_path(self._config.data_directory)
-		# LOGGER.debug("Loading dictionaries from %s", dictionary_dir)
-		main_candidates = ["enumain.dic", "main.dic"]
-		root_candidates = ["enuroot.dic", "root.dic"]
-		abbr_candidates = ["enuabbr.dic", "abbr.dic"]
+		if not self._dictionary_handle:
+			return
 
-		for index, candidates in enumerate((main_candidates, root_candidates, abbr_candidates)):
+		dictionary_dir = get_short_path(self._config.data_directory)
+		lang = self._config.language_code.lower()
+
+		# Definition of categories and their specific candidates
+		# We removed the generic 'root.dic' from the main loop to control it better.
+		categories = (
+			(f"{lang}main.dic", f"{lang.upper()}main.dic"),
+			(f"{lang}root.dic", f"{lang.upper()}root.dic"),
+			(f"{lang}abbr.dic", f"{lang.upper()}abbr.dic")
+		)
+
+		for index, candidates in enumerate(categories):
+			found_specific = False
 			for candidate in candidates:
 				path = os.path.join(dictionary_dir, candidate)
 				if os.path.exists(path):
-					# LOGGER.debug("Loading dictionary index=%s file=%s", index, path)
 					self._dll.eciLoadDict(self._handle, self._dictionary_handle, index, path.encode("mbcs"))
+					found_specific = True
 					break
+			
+			# If no language-specific file was found:
+			if not found_specific:
+				# ONLY allow the generic fallback if the language is English
+				if lang in ("enu", "eng"):
+					# Map index to generic filename
+					generic_name = ["main.dic", "root.dic", "abbr.dic"][index]
+					generic_path = os.path.join(dictionary_dir, generic_name)
+					
+					if os.path.exists(generic_path):
+						self._dll.eciLoadDict(self._handle, self._dictionary_handle, index, generic_path.encode("mbcs"))
+					else:
+						self._dll.eciLoadDict(self._handle, self._dictionary_handle, index, b"")
+				else:
+					# For all other languages (fra, ptb, etc.): 
+					# If no 'fraroot.dic' exists, clear the slot! No English leaking anymore.
+					self._dll.eciLoadDict(self._handle, self._dictionary_handle, index, b"")
 
 	# ------------------------------------------------------------------
 	# Public API invoked from the controller
@@ -317,14 +346,51 @@ class EloquenceRuntime:
 			self._handle = None
 
 	def set_param(self, param_id: int, value: int) -> None:
-		# LOGGER.debug("Setting param %s=%s", param_id, value)
-		self._dll.eciSetParam(self._handle, param_id, value)
-		self._params[param_id] = value
-		# When changing voice (param 9), update all voice parameters
-		if param_id == 9:
-			# LOGGER.debug("Voice changed, reading voice parameters")
-			for param in (RATE, PITCH, VLM, FLUCTUATION, HSZ, RGH, BTH):
-				self._voice_params[param] = self._dll.eciGetVoiceParam(self._handle, 0, param)
+		if param_id != 9:
+			self._dll.eciSetParam(self._handle, param_id, value)
+			self._params[param_id] = value
+			return
+
+		# --- LANGUAGE CHANGE (ID 9) ---
+		# Map numerical IDs to language prefixes used for dictionary files
+		mapping = {
+			65536: "enu", 65537: "eng", 131072: "esp", 131073: "esm",
+			196608: "fra", 196609: "frc", 262144: "deu", 327680: "ita",
+			393216: "chs", 458752: "ptb", 524288: "jpn", 589824: "fin", 655360: "kor",
+		}
+
+		# Identify the new language. Use "unknown" instead of "enu" as fallback 
+		# to prevent loading English dicts for other languages.
+		new_lang_code = mapping.get(value, "unknown")
+		self._config.language_code = new_lang_code
+
+		# Hard Reset: Delete and recreate handle to clear ECI internal caches/dictionaries
+		self._dll.eciStop(self._handle)
+		self._dll.eciDelete(self._handle)
+		self._handle = self._dll.eciNewEx(value)
+
+		if not self._handle:
+			return
+
+		# Re-establish required settings for the fresh handle
+		self._dll.eciRegisterCallback(self._handle, self._callback, None)
+		self._dll.eciSetOutputBuffer(self._handle, self._samples, self._buffer)
+		self._dictionary_handle = self._dll.eciNewDict(self._handle)
+		self._dll.eciSetDict(self._handle, self._dictionary_handle)
+		self._dll.eciSetParam(self._handle, ECI_INPUT_TYPE, 1)
+
+		# Restore the Voice Variant (Algorithm)
+		# This ensures women's voices use the correct synthesis model after handle recreation
+		if hasattr(self, '_current_variant') and self._current_variant is not None:
+			self._dll.eciCopyVoice(self._handle, self._current_variant, 0)
+
+		# Restore voice parameters (Rate, Pitch, etc.) which are lost on eciDelete
+		for p_id, p_val in self._voice_params.items():
+			self._dll.eciSetVoiceParam(self._handle, 0, p_id, p_val)
+
+		# Trigger dictionary loading for the new language context
+		self._load_dictionaries()
+		self._params[9] = value
 
 	def set_voice_param(self, param_id: int, value: int, temporary: bool = False) -> None:
 		# LOGGER.debug("Setting voice param %s=%s temporary=%s", param_id, value, temporary)
@@ -334,6 +400,7 @@ class EloquenceRuntime:
 
 	def copy_voice(self, variant: int) -> None:
 		# LOGGER.debug("Copying voice variant %s", variant)
+		self._current_variant = variant # Store variant for language-switch resets
 		self._dll.eciCopyVoice(self._handle, variant, 0)
 		for param in (RATE, PITCH, VLM, FLUCTUATION, HSZ, RGH, BTH):
 			self._voice_params[param] = self._dll.eciGetVoiceParam(self._handle, 0, param)

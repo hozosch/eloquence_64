@@ -26,6 +26,7 @@ eloquence_original.nvda-addon
 __pycache__/
 *.py[cod]
 *$py.class
+*.dll
 
 # C extensions
 *.so

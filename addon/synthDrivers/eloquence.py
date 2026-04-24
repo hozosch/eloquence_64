@@ -58,7 +58,6 @@ import os
 import config
 import re
 import logging
-import core
 import globalVars
 from synthDriverHandler import (
 	SynthDriver,
@@ -703,32 +702,59 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 
 class SynthDriver(synthDriverHandler.SynthDriver):
 	settingsPanel = EloquenceSettingsPanel
-	supportedSettings = (
+	supportedSettings = [
 		SynthDriver.VoiceSetting(),
 		SynthDriver.VariantSetting(),
 		SynthDriver.RateSetting(),
 		SynthDriver.PitchSetting(),
 		SynthDriver.InflectionSetting(),
 		SynthDriver.VolumeSetting(),
+
 		# Translators: A synth setting available in speech settings dialog
 		NumericDriverSetting("hsz", _("Hea&d size")),
+
 		# Translators: A synth setting available in speech settings dialog
 		NumericDriverSetting("rgh", _("Rou&ghness")),
+
 		# Translators: A synth setting available in speech settings dialog
 		NumericDriverSetting("bth", _("Breathi&ness")),
+
+		# Translators: A synth setting available in speech settings dialog
 		BooleanDriverSetting(
-			# Translators: A synth setting available in speech settings dialog
 			"backquoteVoiceTags",
 			_("Enable backquote voice &tags"),
 			True,
 		),
+
 		# Translators: A synth setting available in speech settings dialog
-		BooleanDriverSetting("ABRDICT", _("Enable &abbreviation dictionary"), False),
+		BooleanDriverSetting(
+			"ABRDICT",
+			_("Enable &abbreviation dictionary"),
+			False,
+			),
+
 		# Translators: A synth setting available in speech settings dialog
-		BooleanDriverSetting("phrasePrediction", _("Enable phras&e prediction"), False),
+		BooleanDriverSetting(
+			"phrasePrediction",
+			_("Enable phras&e prediction"),
+			False,
+		),
+
 		# Translators: A synth setting available in speech settings dialog
-		DriverSetting("pauseMode", _("Shorten &pauses"), defaultVal="0"),
-	)
+		DriverSetting(
+			"pauseMode",
+			_("Shorten &pauses"),
+			defaultVal="0",
+		),
+
+		# Translators: A synth setting available in speech settings dialog
+		DriverSetting(
+			"sampleRate",
+			_("&Sample rate"),
+			defaultVal="1",
+		),
+	]
+
 	supportedCommands = {
 		IndexCommand,
 		CharacterModeCommand,
@@ -739,7 +765,9 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		VolumeCommand,
 		PhonemeCommand,
 	}
+
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
+
 	PROSODY_ATTRS = {
 		PitchCommand: _eloquence.pitch,
 		VolumeCommand: _eloquence.vlm,
@@ -749,7 +777,6 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 	description = "ETI-Eloquence"
 	name = "eloquence"
 
-	# Initialize _pause_mode at class level to prevent issues with setting restoration
 	_pause_mode = 0
 
 	@classmethod
@@ -764,7 +791,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 			return False
 
 	def __init__(self):
-		# Safe settings panel registration - won't crash if API changes in different NVDA versions
+		# Safe settings panel registration
 		try:
 			if hasattr(gui.settingsDialogs, "NVDASettingsDialog"):
 				if hasattr(gui.settingsDialogs.NVDASettingsDialog, "categoryClasses"):
@@ -772,8 +799,8 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 						gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(EloquenceSettingsPanel)
 		except Exception as e:
 			log.warning(f"Could not register Eloquence settings panel: {e}")
-			# Continue initialization - synth will work without settings panel
 
+		# --- Initialize backend ---
 		try:
 			log.info("Eloquence: Starting initialization")
 			_eloquence.initialize(self._onIndexReached)
@@ -782,19 +809,30 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 			log.error(f"Eloquence: Failed to initialize _eloquence module: {e}", exc_info=True)
 			raise
 
+		# --- Voice + parameters ---
 		try:
 			voice_param = _eloquence.params.get(9)
 			if voice_param is None:
 				configured_voice = config.conf.get("speech", {}).get("eci", {}).get("voice", "enu")
 				voice_info = _eloquence.langs.get(configured_voice) or _eloquence.langs.get("enu")
 				voice_param = voice_info[0] if voice_info else 65536
+
 			self._update_voice_state(voice_param, update_default=True)
-			# Initialize _rate first before setting the rate property
+
 			self._rate = self._percentToParam(50, minRate, maxRate)
 			self.rate = 50
+
 			self.variant = "1"
+
 			self._pause_mode = 0
+
+			# IMPORTANT: needed for dynamic settings visibility
+			self._sample_rate = int(
+				config.conf.get("eloquence", {}).get("sampleRate", 1)
+			)
+
 			log.info("Eloquence: Initialization completed successfully")
+
 		except Exception as e:
 			log.error(f"Eloquence: Failed during voice/parameter setup: {e}", exc_info=True)
 			raise
@@ -830,7 +868,6 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 
 	def terminate(self):
 		_eloquence.close_audio()
-		# Safe settings panel removal - won't crash if it was never registered
 		try:
 			if hasattr(gui.settingsDialogs, "NVDASettingsDialog"):
 				if hasattr(gui.settingsDialogs.NVDASettingsDialog, "categoryClasses"):
@@ -1040,6 +1077,47 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 
 	def _get_pauseMode(self):
 		return str(self._pause_mode)
+
+	def _get_availableSamplerates(self):
+		rates = {}
+		# Standard ECI rates
+		rates["0"] = StringParameterInfo("0", "8 kHz")
+		rates["1"] = StringParameterInfo("1", "11 kHz")
+		# High quality mode using the upsampler DLL
+		rates["2"] = StringParameterInfo("2", "22 kHz")
+		return rates
+
+	def _set_sampleRate(self, val):
+		try:
+			val = int(val)
+		except (ValueError, TypeError):
+			val = 1
+
+		if hasattr(self, "_sample_rate") and self._sample_rate == val:
+			return
+
+		self._sample_rate = int(val)
+
+		# Update internal state and audio player
+		_eloquence.set_sample_rate(val)
+		client = _eloquence._client
+		if not client:
+			return
+		self.cancel()
+		if client._audio_worker:
+			client._audio_worker.stop()
+			client._audio_worker.join(timeout=1)
+			client._audio_worker = None
+		if client._player:
+			try:
+				client._player.close()
+			except Exception:
+				log.exception("WavePlayer close failed")
+			client._player = None
+		client.initialize_audio()
+
+	def _get_sampleRate(self):
+		return str(self._sample_rate)
 
 	_backquoteVoiceTags = False
 	_ABRDICT = False

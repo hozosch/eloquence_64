@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: Eloquence v16\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-03-02 16:27+0000\n"
-"PO-Revision-Date: 2026-03-05 20:03+0100\n"
+"PO-Revision-Date: 2026-03-24 21:55+0100\n"
 "Last-Translator: Karl Eick <hozosch@web.de>\n"
 "Language-Team: \n"
 "Language: de\n"
@@ -385,6 +385,11 @@ msgstr "Nur am Textende"
 #: addon\synthDrivers\eloquence.py:997
 msgid "Always"
 msgstr "Immer"
+
+#. Translators: A synth setting available in speech settings dialog
+#: addon\synthDrivers\eloquence.py:729
+msgid "&Sample rate"
+msgstr "&Abtastrate"
 
 #. Translators: Title of the Review Update Changes dialog used during add-on update.
 #: addon\synthDrivers\_eloquence_updater.py:19

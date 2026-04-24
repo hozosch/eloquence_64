@@ -41,7 +41,8 @@ for po in poFiles:
 
 eci_dir = addonDir / "synthDrivers" / "eloquence"
 host_exe = addonDir / "synthDrivers" / "eloquence_host32.exe"
-
+upsampler32 = addonDir / "synthDrivers" / "upsampler32.dll"
+upsampler64 = addonDir / "synthDrivers" / "upsampler64.dll"
 required_proprietary = [eci_dir / "ECI.DLL"] + [
 	eci_dir / f"{name}.SYN" for name in ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB")
 ]
@@ -59,6 +60,23 @@ if missing:
 if not host_exe.exists():
 	print(
 		f"ERROR: {host_exe} not found.\nRun `build_host.cmd` to compile the 32-bit host executable first.",
+		file=sys.stderr,
+	)
+	Exit(1)
+
+missing_upsampler = []
+
+if not upsampler32.exists():
+	missing_upsampler.append(str(upsampler32))
+
+if not upsampler64.exists():
+	missing_upsampler.append(str(upsampler64))
+
+if missing_upsampler:
+	missing_str = "\n  ".join(missing_upsampler)
+	print(
+		f"ERROR: Missing upsampler DLL(s):\n  {missing_str}\n\n"
+		f"Run `build_upsampler.cmd` to build both 32-bit and 64-bit versions.",
 		file=sys.stderr,
 	)
 	Exit(1)
