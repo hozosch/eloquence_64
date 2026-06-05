@@ -572,13 +572,54 @@ VOICE_ID_TO_LANG = {voice_id: lang_code for lang_code, (voice_id, _) in langs.it
 _current_lang = "enu"
 
 
+def _sync_eci_ini_paths(eloquence_dir):
+	"""Rewrite the absolute ``Path=`` entries in ECI.INI to the current location.
+
+	The ECI engine reads each language's ``.syn`` voice file via an absolute
+	path stored in ECI.INI.  When the add-on is copied to a portable NVDA, a
+	different Windows account, or any other folder, those baked-in paths no
+	longer exist and Eloquence fails to load.  Rewriting them on every start
+	makes the add-on self-healing regardless of where it lives or who runs it.
+	"""
+	import re
+
+	ini_path = os.path.join(eloquence_dir, "ECI.INI")
+	if not os.path.isfile(ini_path):
+		return
+	# Match "Path=<anything>\<name>.syn", keeping only the file name so we can
+	# re-anchor it to the real add-on directory.
+	path_re = re.compile(r"(?im)^(\s*Path\s*=\s*).*?[\\/]?([^\\/\r\n]+\.syn)\s*$")
+
+	def _replace(match):
+		filename = match.group(2)
+		new_path = os.path.join(eloquence_dir, filename)
+		return f"{match.group(1)}{new_path}"
+
+	try:
+		# latin-1 is a lossless byte<->char mapping, so we never corrupt the
+		# binary-ish ECI.INI content while editing only the Path lines.
+		with open(ini_path, "r", encoding="latin-1") as f:
+			original = f.read()
+		updated = path_re.sub(_replace, original)
+		if updated != original:
+			with open(ini_path, "w", encoding="latin-1") as f:
+				f.write(updated)
+			LOGGER.info("Updated ECI.INI voice paths for current location: %s", eloquence_dir)
+	except OSError:
+		# Read-only locations (e.g. secure screen systemConfig) are best-effort.
+		LOGGER.exception("Could not update ECI.INI voice paths")
+
+
 def initialize(indexCallback=None):
 	global onIndexReached, _current_lang
+	eci_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "eloquence", "eci.dll"))
+	# Repair ECI.INI before the host loads the engine so voices resolve no
+	# matter where this add-on folder was copied from.
+	_sync_eci_ini_paths(os.path.dirname(eci_path))
 	_client.ensure_started()
 	_client.initialize_audio()
 	_ensure_synth_worker()
 	onIndexReached = indexCallback
-	eci_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "eloquence", "eci.dll"))
 	voice_conf = config.conf.get("speech", {}).get("eci", {})
 	_current_lang = voice_conf.get("voice", "enu")
 	payload = {
