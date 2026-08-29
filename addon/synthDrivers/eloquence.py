@@ -794,9 +794,8 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 			self._pause_mode = 0
 
 			# IMPORTANT: needed for dynamic settings visibility
-			self._sample_rate = int(
-				config.conf.get("eloquence", {}).get("sampleRate", 1)
-			)
+			# Backend selected the persisted engine variant before ECI was started.
+			self._sample_rate = int(_eloquence.get_sample_rate())
 
 			log.info("Eloquence: Initialization completed successfully")
 
@@ -1063,11 +1062,9 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 
 	def _get_availableSamplerates(self):
 		rates = {}
-		# Standard ECI rates
 		rates["0"] = StringParameterInfo("0", "8 kHz")
 		rates["1"] = StringParameterInfo("1", "11 kHz")
-		# High quality mode using the upsampler DLL
-		rates["2"] = StringParameterInfo("2", "22 kHz")
+		rates["2"] = StringParameterInfo("2", "16 kHz")
 		return rates
 
 	def _set_sampleRate(self, val):
@@ -1079,9 +1076,25 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		if hasattr(self, "_sample_rate") and self._sample_rate == val:
 			return
 
+		oldVal = int(getattr(self, "_sample_rate", 1))
 		self._sample_rate = int(val)
+		_eloquence.persist_rate_mode(val)
 
-		# Update internal state and audio player
+		# Entering/leaving native 16 kHz changes the already-loaded SYN modules.
+		# Reload only the 32-bit Eloquence host so NVDA itself does not need a restart.
+		nativeModes = tuple(m for m in _eloquence._ECI_BASE_RATE_MAP if m >= 2)
+		# Any change involving a native-16 variant requires reloading the host,
+		# because the SYN binary itself changes.
+		if oldVal != val and (oldVal in nativeModes or val in nativeModes):
+			try:
+				self.cancel()
+				_eloquence.restart_for_sample_rate(val, self._onIndexReached, getattr(self, "_variant", "1"))
+				log.info("Eloquence host reloaded for sample-rate mode %d", val)
+			except Exception:
+				log.exception("Failed to reload Eloquence host for sample-rate change")
+			return
+
+		# 8/11 share the pristine engines and can switch without reloading the host.
 		_eloquence.set_sample_rate(val)
 		client = _eloquence._client
 		if not client:

@@ -22,29 +22,21 @@ addonDir = Path("addon")
 
 # --- Compile translations (.po -> .mo) -------------------------------------
 
-# Find all .po files under addon/locale
 poFiles = glob.glob("addon/locale/*/LC_MESSAGES/*.po")
-
 moFiles = []
-
 for po in poFiles:
 	mo = po[:-3] + ".mo"
-	moFile = env.Command(
-		target=mo,
-		source=po,
-		action="msgfmt -o $TARGET $SOURCE",
-	)
+	moFile = env.Command(target=mo, source=po, action="msgfmt -o $TARGET $SOURCE")
 	moFiles.append(moFile)
 
-# --- Validate required binaries -------------------------------------------
+# --- Validate required binaries and native-16 patches ----------------------
 
 eci_dir = addonDir / "synthDrivers" / "eloquence"
 host_exe = addonDir / "synthDrivers" / "eloquence_host32.exe"
-upsampler32 = addonDir / "synthDrivers" / "upsampler32.dll"
-upsampler64 = addonDir / "synthDrivers" / "upsampler64.dll"
-required_proprietary = [eci_dir / "ECI.DLL"] + [
-	eci_dir / f"{name}.SYN" for name in ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB")
-]
+voice_names = ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB")
+patch_names = ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB", "chs", "jpn", "kor")
+required_proprietary = [eci_dir / "ECI.DLL"] + [eci_dir / f"{name}.SYN" for name in voice_names]
+required_patches = [eci_dir / f"{name}.p16" for name in patch_names]
 
 missing = [str(p) for p in required_proprietary if not p.exists()]
 if missing:
@@ -56,26 +48,18 @@ if missing:
 	)
 	Exit(1)
 
-if not host_exe.exists():
+missing_patches = [str(p) for p in required_patches if not p.exists()]
+if missing_patches:
 	print(
-		f"ERROR: {host_exe} not found.\nRun `build_host.cmd` to compile the 32-bit host executable first.",
+		"ERROR: Missing native 16 kHz patch files:\n  "
+		+ "\n  ".join(missing_patches),
 		file=sys.stderr,
 	)
 	Exit(1)
 
-missing_upsampler = []
-
-if not upsampler32.exists():
-	missing_upsampler.append(str(upsampler32))
-
-if not upsampler64.exists():
-	missing_upsampler.append(str(upsampler64))
-
-if missing_upsampler:
-	missing_str = "\n  ".join(missing_upsampler)
+if not host_exe.exists():
 	print(
-		f"ERROR: Missing upsampler DLL(s):\n  {missing_str}\n\n"
-		f"Run `build_upsampler.cmd` to build both 32-bit and 64-bit versions.",
+		f"ERROR: {host_exe} not found.\nRun `build_host.cmd` to compile the 32-bit host executable first.",
 		file=sys.stderr,
 	)
 	Exit(1)
@@ -84,22 +68,15 @@ if missing_upsampler:
 
 manifest = env.NVDAManifest(env.File(str(addonDir / "manifest.ini")), "manifest.ini.tpl")
 env.Depends(manifest, "buildVars.py")
-# addon_version comes from `git describe` at buildVars import time. That value is
-# not captured by the content signatures of manifest.ini.tpl or buildVars.py, so
-# without an explicit dependency SCons caches a stale version in manifest.ini
-# while the .nvda-addon filename (recomputed each run) moves ahead. Depend on the
-# version string itself so the manifest regenerates whenever HEAD moves.
 env.Depends(manifest, env.Value(buildVars.addon_info["addon_version"]))
 
 # --- Build addon bundle ----------------------------------------------------
 
 addonFile = env.File("${addon_name}-${addon_version}.nvda-addon")
-
 addon = env.NVDAAddon(addonFile, env.Dir(str(addonDir)))
 env.Depends(addon, moFiles)
 env.Depends(addon, manifest)
 
-# Depend on all source files in the addon tree so SCons rebuilds on changes.
 for p in Path("addon").rglob("*"):
 	if p.is_file():
 		env.Depends(addon, str(p))
@@ -107,8 +84,6 @@ for p in Path("addon").rglob("*"):
 # --- Generate POT template --------------------------------------------------
 
 potFile = Path(f"{env['addon_name']}.pot")
-
-# Collect all Python sources inside addon/
 pySources = [str(p) for p in addonDir.rglob("*.py")]
 pySources.append("buildVars.py")
 
@@ -128,8 +103,6 @@ pot = env.Command(
 	),
 )
 
-# Create explicit target: scons pot
 env.Alias("pot", pot)
-
 env.Default(addon)
 env.Clean(addon, [".sconsign.dblite"])

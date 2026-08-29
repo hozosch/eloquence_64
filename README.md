@@ -13,6 +13,30 @@ For development scenarios where the prebuilt Eloquence Host Process executable i
 the `ELOQUENCE_HOST_COMMAND` environment variable can be set to the command that
 launches a compatible 32-bit Python interpreter with `host_eloquence32.py`.
 
+## Native 16 kHz mode
+
+Starting with v20, the add-on provides a native 16 kHz Eloquence mode. It
+replaces the external 11.025→22.05 kHz output upsampler used by earlier releases.
+
+The 8 kHz and 11.025 kHz modes still use the original Eloquence voice data and
+can be switched live through Eloquence's normal sample-rate parameter. The 16
+kHz mode is different: it applies a compact reversible patch to the active
+`.SYN` synthesis module before that module is loaded. Changing the file on disk
+does not change the already-loaded engine in memory, so entering or leaving 16
+kHz requires restarting the **32-bit Eloquence Host Process**. NVDA itself is
+not restarted. After the host reload, the add-on restores the selected language,
+voice variant/synthesis model, and user voice parameters. Switching back to 8
+or 11 kHz restores the original `.SYN` bytes before the host is reloaded.
+
+A live 16 kHz switch like the native 8/11 kHz switch is therefore not used: it
+would require modifying the loaded proprietary synthesis module in process
+memory, whereas restarting the isolated host lets Eloquence load the patched
+module normally and keeps the change reversible.
+
+The final 16 kHz tuning includes a small consonant/noise gain increase, the sixth
+cascade formant, and language-aware tuning of the stage-5/6 sibilance component.
+See [docs/native16.md](docs/native16.md) for details.
+
 ## Traditional Chinese Script Conversion
 
 When the Mandarin Chinese voice is selected, Text Preprocessing applies Script
@@ -94,13 +118,15 @@ background.
 git submodule init && git submodule update   # fetch pronunciation dictionaries
 python fetch_eci.py                          # one-time: download proprietary ECI.DLL + voice data
 build_host.cmd                               # compile Eloquence Host Process (only needed if host_eloquence32.py changes)
-build_upsampler.cmd                          # compile 32-bit and 64-bit upsampler DLLs
 scons.bat                                    # package everything into the .nvda-addon file
 ```
 
-**Note:** `scons.bat` validates that proprietary files, the Eloquence Host
-Process executable, and the upsampler DLLs exist, but does not fetch or build
-them — steps 2, 3, and 4 must be done first.
+The compact native-16 patch files are stored in the repository and are applied
+at run time; no separate upsampler DLL build is required.
+
+**Note:** `scons.bat` validates that the proprietary files, Eloquence Host
+Process executable, and native-16 patch files exist, but does not fetch or build
+the proprietary files or host executable — steps 2 and 3 must be done first.
 
 ### Development checks
 

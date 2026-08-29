@@ -27,9 +27,9 @@ def _get_version():
 addon_info = {
 	"addon_name": "Eloquence",
 	"addon_summary": "Eloquence Synthesizer",
-	"addon_description": "Eloquence synthesizer for NVDA with 64-bit support",
+	"addon_description": "Eloquence synthesizer for NVDA with 64-bit and native 16 kHz support",
 	"addon_version": _get_version(),
 	"addon_author": "NVDA User",
-	"addon_url": "https://github.com/fastfinge/eloquence_64",
+	"addon_url": "https://github.com/hozosch/eloquence_64",
 	"addon_lastTestedNVDAVersion": "2034.1",
 }

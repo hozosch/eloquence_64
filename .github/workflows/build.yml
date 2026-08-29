@@ -45,7 +45,7 @@ jobs:
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
-          install: gettext mingw-w64-x86_64-gcc mingw-w64-i686-gcc
+          install: gettext
           update: true
 
       - name: Add MSYS2 to PATH
@@ -57,12 +57,6 @@ jobs:
         shell: cmd
         env:
           PYTHON32: ${{ steps.py32.outputs.python-path }}
-
-      - name: Build upsampler DLLs
-        run: build_upsampler.cmd
-        shell: cmd
-        env:
-          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
 
       - name: Fetch proprietary files
         run: python fetch_eci.py
@@ -77,7 +71,7 @@ jobs:
           name: nvda-addon
           path: "*.nvda-addon"
           archive: false
-      
+
       - name: Upload pot artifact
         uses: actions/upload-artifact@v7
         with:

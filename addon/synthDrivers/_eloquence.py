@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import logging
 import os
+import struct
 import socket
 
 import queue
@@ -13,8 +14,6 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Sequence, Tuple
-from ctypes import CDLL, POINTER, c_int16, c_int
-from platform import architecture
 
 from . import _eloquence_ipc as _ipc
 
@@ -30,28 +29,130 @@ AUTH_KEY_BYTES = 16
 
 
 # Audio handling -----------------------------------------------------------------
-# Optional native upsampler. Mode 2 uses Eloquence at 11025 Hz and feeds the
-# processed output to NVDA at twice that rate.
-_dll_name = "upsampler64.dll" if architecture()[0] == "64bit" else "upsampler32.dll"
-_upsampler_dll_path = os.path.join(os.path.dirname(__file__), _dll_name)
-
-try:
-	upsampler_dll = CDLL(_upsampler_dll_path)
-	upsampler_dll.process.argtypes = (POINTER(c_int16), c_int, POINTER(c_int16))
-	upsampler_dll.process.restype = None
-	upsampler_dll.reset.argtypes = ()
-	upsampler_dll.reset.restype = None
-except Exception:
-	LOGGER.exception("Failed to load %s", _dll_name)
-	upsampler_dll = None
-
+# Compact native-rate build: no external upsampler DLL.
 _ECI_BASE_RATE_MAP = {
 	0: 8000,
 	1: 11025,
-	2: 11025,
+	2: 16000,  # final native16 treatment
 }
 _current_sample_rate_mode = 1
+_current_variant = 0
 _ECI_SAMPLE_RATE_PARAM = 5
+
+_RATE_MARKER_PATH = os.path.join(os.path.dirname(__file__), "eloquence", "nativeRateMode.txt")
+
+def _read_persisted_rate_mode(default=1):
+	try:
+		with open(_RATE_MARKER_PATH, "r", encoding="ascii") as f:
+			mode = int(f.read().strip())
+		if mode in _ECI_BASE_RATE_MAP:
+			return mode
+	except Exception:
+		pass
+	return default
+
+def persist_rate_mode(mode):
+	try:
+		mode = int(mode)
+	except (TypeError, ValueError):
+		mode = 1
+	if mode not in _ECI_BASE_RATE_MAP:
+		mode = 1
+	try:
+		with open(_RATE_MARKER_PATH, "w", encoding="ascii") as f:
+			f.write(str(mode))
+	except Exception:
+		LOGGER.exception("Could not persist Eloquence sample-rate marker")
+	return mode
+
+_ENGINE_VARIANTS = ("chs", "DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "jpn", "kor", "PTB")
+
+def _load_p16_patch(path):
+	with open(path, "rb") as f:
+		data = f.read()
+	if len(data) < 16 or data[:4] != b"P16D":
+		raise ValueError("invalid P16 patch")
+	orig_size, new_size, count = struct.unpack_from("<III", data, 4)
+	pos = 16
+	runs = []
+	for _ in range(count):
+		off, old_len, new_len = struct.unpack_from("<III", data, pos)
+		pos += 12
+		old = data[pos:pos + old_len]
+		pos += old_len
+		new = data[pos:pos + new_len]
+		pos += new_len
+		runs.append((off, old, new))
+	return orig_size, new_size, runs
+
+
+def _apply_p16(path, patch_path, enable):
+	orig_size, new_size, runs = _load_p16_patch(patch_path)
+	with open(path, "rb") as f:
+		data = bytearray(f.read())
+	want_size = new_size if enable else orig_size
+	if enable and len(data) < new_size:
+		data.extend(b"\0" * (new_size - len(data)))
+	for off, old, new in runs:
+		src = old if enable else new
+		dst = new if enable else old
+		if src and data[off:off + len(src)] != src:
+			if dst and data[off:off + len(dst)] == dst:
+				continue
+			raise RuntimeError("unexpected SYN bytes at 0x%X" % off)
+		data[off:off + len(dst)] = dst
+	if len(data) > want_size:
+		del data[want_size:]
+	elif len(data) < want_size:
+		data.extend(b"\0" * (want_size - len(data)))
+	with open(path, "wb") as f:
+		f.write(data)
+
+
+def _p16_matches(path, patch_path, enabled):
+	orig_size, new_size, runs = _load_p16_patch(patch_path)
+	try:
+		with open(path, "rb") as f:
+			data = f.read()
+	except Exception:
+		return False
+	want_size = new_size if enabled else orig_size
+	if len(data) != want_size:
+		return False
+	for off, old, new in runs:
+		b = new if enabled else old
+		if b and data[off:off + len(b)] != b:
+			return False
+	return True
+
+
+def _prepare_syn_engines(mode):
+	"""Switch active SYN files between pristine 8/11 and compact native-16 variants."""
+	base = os.path.join(os.path.dirname(__file__), "eloquence")
+	try:
+		mode = int(mode)
+	except (TypeError, ValueError):
+		mode = 1
+	target_ext = {2: ".p16"}.get(mode)
+	for stem in _ENGINE_VARIANTS:
+		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
+		dst = next((os.path.join(base, n) for n in candidates if os.path.exists(os.path.join(base, n))), None)
+		if not dst:
+			LOGGER.warning("Could not locate active SYN for %s", stem)
+			continue
+		patches = [os.path.join(base, stem + ext) for ext in (".p16",) if os.path.exists(os.path.join(base, stem + ext))]
+		try:
+			# Revert whichever compact native variant is currently active.
+			for pp in patches:
+				if _p16_matches(dst, pp, True):
+					_apply_p16(dst, pp, False)
+					break
+			if target_ext:
+				_apply_p16(dst, os.path.join(base, stem + target_ext), True)
+		except Exception:
+			LOGGER.exception("Could not switch %s SYN engine", stem)
+	labels = {2: "native 16 kHz"}
+	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
 
 def get_sample_rate() -> int:
@@ -59,11 +160,8 @@ def get_sample_rate() -> int:
 
 
 def set_sample_rate(mode) -> None:
-	"""Select 8 kHz, 11.025 kHz, or the upsampled mode.
-
-	The WavePlayer is normally recreated by the caller after this setting changes.
-	"""
-	global _current_sample_rate_mode
+	"""Select 0=8 kHz, 1=11.025 kHz, or 2=final native 16 kHz tuning."""
+	global _current_sample_rate_mode, _current_variant
 	try:
 		mode = int(mode)
 	except (TypeError, ValueError):
@@ -71,9 +169,8 @@ def set_sample_rate(mode) -> None:
 	if mode not in _ECI_BASE_RATE_MAP:
 		mode = 1
 	_current_sample_rate_mode = mode
-
-	# Eloquence itself only knows its native 8 kHz and 11.025 kHz modes.
-	eci_value = 0 if mode == 0 else 1
+	eci_value = 0 if mode == 0 else (2 if mode >= 2 else 1)
+	LOGGER.info("Setting Eloquence sample-rate mode %d (ECI parameter 5 = %d)", mode, eci_value)
 	try:
 		_client.set_param(_ECI_SAMPLE_RATE_PARAM, eci_value)
 	except Exception:
@@ -99,13 +196,6 @@ class AudioWorker(threading.Thread):
 		self._stopping = False
 		self._player_lock = threading.RLock()
 
-	def _reset_upsampler(self) -> None:
-		if upsampler_dll:
-			try:
-				upsampler_dll.reset()
-			except Exception:
-				LOGGER.exception("Failed to reset upsampler")
-
 	def run(self) -> None:
 		pending_audio: Optional[AudioChunk] = None
 		while self._running:
@@ -118,9 +208,7 @@ class AudioWorker(threading.Thread):
 			data, index, is_final, seq = chunk
 			if pending_audio and pending_audio[3] < self._client._sequence:
 				pending_audio = None
-				self._reset_upsampler()
 			if seq < self._client._sequence:
-				self._reset_upsampler()
 				self._queue.task_done()
 				continue
 
@@ -173,15 +261,7 @@ class AudioWorker(threading.Thread):
 		try:
 			with self._player_lock:
 				if not self._stopping and self._player:
-					if get_sample_rate() == 2 and upsampler_dll:
-						in_len = len(data) // 2
-						if in_len:
-							in_buffer = (c_int16 * in_len).from_buffer_copy(data)
-							out_buffer = (c_int16 * (in_len * 2))()
-							upsampler_dll.process(in_buffer, in_len, out_buffer)
-							self._player.feed(bytes(out_buffer), onDone=wrapped_on_done)
-					else:
-						self._player.feed(data, onDone=wrapped_on_done)
+					self._player.feed(data, onDone=wrapped_on_done)
 		except FileNotFoundError:
 			LOGGER.warning("Sound device not found during feed")
 		except Exception:
@@ -217,7 +297,6 @@ class AudioWorker(threading.Thread):
 
 	def _schedule_idle(self) -> None:
 		"""Signal the player that playback is complete."""
-		self._reset_upsampler()
 		try:
 			with self._player_lock:
 				if not self._stopping and self._player:
@@ -334,7 +413,7 @@ class EloquenceHostClient:
 
 		mode = get_sample_rate()
 		base_rate = _ECI_BASE_RATE_MAP.get(mode, 11025)
-		target_rate = base_rate * 2 if mode == 2 and upsampler_dll else base_rate
+		target_rate = base_rate
 
 		try:
 			if version_year >= 2025:
@@ -716,7 +795,17 @@ def _sync_eci_ini_paths(eloquence_dir):
 
 
 def initialize(indexCallback=None):
-	global onIndexReached, _current_lang
+	global onIndexReached, _current_lang, _current_sample_rate_mode, _current_variant
+	try:
+		config_default = int(config.conf.get("eloquence", {}).get("sampleRate", 1))
+	except (TypeError, ValueError):
+		config_default = 1
+	if config_default not in _ECI_BASE_RATE_MAP:
+		config_default = 1
+	configured_mode = _read_persisted_rate_mode(config_default)
+	_current_sample_rate_mode = configured_mode
+	_prepare_syn_engines(configured_mode)
+
 	eci_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "eloquence", "eci.dll"))
 	# Repair ECI.INI before the host loads the engine so voices resolve no
 	# matter where this add-on folder was copied from.
@@ -727,17 +816,78 @@ def initialize(indexCallback=None):
 	onIndexReached = indexCallback
 	voice_conf = config.conf.get("speech", {}).get("eci", {})
 	_current_lang = voice_conf.get("voice", "enu")
+	try:
+		_current_variant = int(voice_conf.get("variant", 0) or 0)
+	except (TypeError, ValueError):
+		_current_variant = 0
 	payload = {
 		"eciPath": eci_path,
 		"dataDirectory": os.path.join(os.path.dirname(eci_path)),
 		"language": _current_lang,
 		"enableAbbreviationDict": config.conf.get("speech", {}).get("eci", {}).get("ABRDICT", False),
 		"enablePhrasePrediction": config.conf.get("speech", {}).get("eci", {}).get("phrasePrediction", False),
-		"voiceVariant": int(voice_conf.get("variant", 0) or 0),
+		"voiceVariant": _current_variant,
 	}
 	response = _client.send_command("initialize", **payload)
 	params.update(response.get("params", {}))
 	voice_params.update(response.get("voiceParams", {}))
+	# The ECI engine must be initialized before parameter 5 can be applied.
+	# This also makes a persisted experimental mode survive an NVDA restart.
+	set_sample_rate(_current_sample_rate_mode)
+
+
+def restart_for_sample_rate(mode, indexCallback=None, variant=None):
+	"""Reload only the 32-bit Eloquence host after swapping SYN variants.
+
+	This gives NVDA a live-ish 8/11/16 switch without restarting NVDA itself.
+	The ECI host is fully torn down so the engine reloads the active .SYN files.
+	"""
+	global _current_sample_rate_mode, _current_variant
+	try:
+		mode = int(mode)
+	except (TypeError, ValueError):
+		mode = 1
+	if mode not in _ECI_BASE_RATE_MAP:
+		mode = 1
+	persist_rate_mode(mode)
+	# Save the current voice, voice variant (synthesis model), and user voice
+	# parameters before the host goes away.  eciSetParam(9) can reset a copied
+	# voice model, so the variant must survive independently of the parameters.
+	saved_voice = params.get(9)
+	saved_vparams = dict(voice_params)
+	try:
+		saved_variant = int(_current_variant if variant is None else variant)
+	except (TypeError, ValueError):
+		saved_variant = 0
+	try:
+		_client.stop()
+	except Exception:
+		pass
+	_client.shutdown()
+	_prepare_syn_engines(mode)
+	_current_sample_rate_mode = mode
+	initialize(indexCallback)
+	# Restore the selected synthesis model before restoring the language voice.
+	# set_voice() re-applies _current_variant immediately after eciSetParam(9),
+	# because changing language can otherwise drop copied variants such as the
+	# female Shelly/Sandy/Grandma models.
+	_current_variant = saved_variant
+	if saved_voice is not None:
+		try:
+			set_voice(int(saved_voice))
+		except Exception:
+			LOGGER.exception("Could not restore Eloquence voice after sample-rate reload")
+	elif saved_variant:
+		try:
+			setVariant(saved_variant)
+		except Exception:
+			LOGGER.exception("Could not restore Eloquence voice variant after sample-rate reload")
+	for pr, value in saved_vparams.items():
+		try:
+			setVParam(int(pr), int(value))
+		except Exception:
+			LOGGER.exception("Could not restore Eloquence voice parameter %s", pr)
+	LOGGER.info("Reloaded Eloquence host for sample-rate mode %d", mode)
 
 
 def speak(text):
@@ -827,9 +977,19 @@ def set_voice(vl):
 		saved_vparams = dict(voice_params)
 		response = _client.send_command("setParam", paramId=9, value=voice_id)
 		params.update(response.get("params", {}))
-		# Do NOT update voice_params from the response.  Instead, restore the
-		# user's base values and push them to the DLL so the new language uses
-		# the correct settings, not stuck temporary ones.
+		# Selecting a language can reset eciCopyVoice's synthesis model.  Re-apply
+		# the active variant before restoring the user's parameter values so female
+		# variants (Shelly/Sandy/Grandma) and the other copied models survive both
+		# language changes and the native-16 host reload.
+		if _current_variant:
+			try:
+				_client.send_command("copyVoice", variant=int(_current_variant))
+			except Exception:
+				LOGGER.exception("Failed to re-apply voice variant after language change")
+		# Do NOT update voice_params from the setParam/copyVoice responses.  Instead,
+		# restore the user's base values and push them to the DLL so the new
+		# language uses the correct settings, not stuck temporary ones or variant
+		# defaults.
 		for pr, val in saved_vparams.items():
 			voice_params[pr] = val
 			try:
@@ -873,8 +1033,10 @@ def setVParam(pr, vl, temporary=False):
 
 
 def setVariant(v):
+	global _current_variant
 	try:
-		response = _client.send_command("copyVoice", variant=int(v))
+		_current_variant = int(v)
+		response = _client.send_command("copyVoice", variant=_current_variant)
 		voice_params.update(response.get("voiceParams", {}))
 	except Exception:
 		LOGGER.exception("Failed to set variant")
