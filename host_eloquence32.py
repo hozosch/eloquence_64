@@ -17,10 +17,11 @@ import argparse
 import logging
 import os
 import pickle
-import socket
 import struct
 import sys
 import threading
+import time
+import _winapi
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "eloquence"))
 from dataclasses import dataclass
@@ -39,45 +40,99 @@ from ctypes import (
 
 _HEADER_STRUCT = struct.Struct("!I")
 
+# Errors that mean the far end is gone rather than something we can retry.
+_DISCONNECTED = frozenset(
+	{
+		_winapi.ERROR_BROKEN_PIPE,  # 109, peer closed or exited
+		232,  # ERROR_NO_DATA, the pipe is being closed
+		233,  # ERROR_PIPE_NOT_CONNECTED
+		6,  # ERROR_INVALID_HANDLE, we closed underneath an in-flight operation
+	}
+)
+
 
 class IpcConnection:
-	"""Simple length-prefixed message channel built on sockets."""
+	"""Length-prefixed message channel over the Host Channel named pipe.
 
-	def __init__(self, sock: socket.socket):
-		self._sock = sock
+	The Synth Driver side creates the pipe with a DACL that admits only its own
+	account, so this end simply opens it.  Reads and writes are synchronous: the
+	Eloquence Host Process is single threaded, and blocking in ReadFile until the
+	next Host Command arrives is exactly the behaviour it wants.  When NVDA dies
+	the pipe breaks and ReadFile fails, which is what ends serve_forever().
+	"""
+
+	def __init__(self, handle):
+		self._handle = handle
 		self._send_lock = threading.Lock()
 
 	def send(self, payload):
 		data = pickle.dumps(payload, protocol=4)
-		header = _HEADER_STRUCT.pack(len(data))
+		frame = _HEADER_STRUCT.pack(len(data)) + data
 		with self._send_lock:
-			self._sock.sendall(header)
-			self._sock.sendall(data)
+			try:
+				written = _winapi.WriteFile(self._handle, frame)[0]
+			except OSError as exc:
+				raise _as_disconnect(exc) from exc
+			if written != len(frame):
+				raise EOFError("Host Channel accepted only part of a frame")
 
 	def recv(self):
-		header = self._recv_exact(_HEADER_STRUCT.size)
-		if not header:
-			raise EOFError
-		(length,) = _HEADER_STRUCT.unpack(header)
+		(length,) = _HEADER_STRUCT.unpack(self._recv_exact(_HEADER_STRUCT.size))
 		return pickle.loads(self._recv_exact(length))
 
 	def close(self):
-		try:
-			self._sock.shutdown(socket.SHUT_RDWR)
-		except OSError:
-			pass
-		self._sock.close()
+		handle, self._handle = self._handle, None
+		if handle is not None:
+			try:
+				_winapi.CloseHandle(handle)
+			except OSError:
+				pass
 
 	def _recv_exact(self, length):
 		chunks = []
 		remaining = length
 		while remaining:
-			chunk = self._sock.recv(remaining)
+			if self._handle is None:
+				raise EOFError("Host Channel is closed")
+			try:
+				chunk = _winapi.ReadFile(self._handle, remaining)[0]
+			except OSError as exc:
+				raise _as_disconnect(exc) from exc
 			if not chunk:
-				raise EOFError
+				raise EOFError("Host Channel returned no data")
 			chunks.append(chunk)
 			remaining -= len(chunk)
 		return b"".join(chunks)
+
+
+def _as_disconnect(exc):
+	"""Translate a dead-peer Windows error into EOFError, leaving others alone."""
+	if getattr(exc, "winerror", None) in _DISCONNECTED:
+		return EOFError(str(exc))
+	return exc
+
+
+def connect_to_host_channel(name, timeout=10.0):
+	"""Open the Host Channel the Synth Driver side is listening on."""
+	deadline = time.monotonic() + timeout
+	while True:
+		try:
+			handle = _winapi.CreateFile(
+				name,
+				_winapi.GENERIC_READ | _winapi.GENERIC_WRITE,
+				0,
+				_winapi.NULL,
+				_winapi.OPEN_EXISTING,
+				0,
+				_winapi.NULL,
+			)
+		except OSError as exc:
+			# Something else momentarily holds the single pipe instance.
+			if exc.winerror != _winapi.ERROR_PIPE_BUSY or time.monotonic() >= deadline:
+				raise
+			time.sleep(0.05)
+			continue
+		return IpcConnection(handle)
 
 
 def get_short_path(path):
@@ -156,12 +211,17 @@ def get_dictionary_candidates(language_code: str) -> tuple[tuple[str, ...], tupl
 
 
 def configure_logging(log_dir: Optional[str]) -> None:
-	"""Initialise logging for the helper."""
+	"""Initialise logging for the helper.
+
+	The log file is truncated at startup so each host invocation starts fresh
+	and old error output does not accumulate across NVDA restarts.  On a clean
+	exit with no errors the file stays at zero bytes.
+	"""
 	log_file = None
 	if log_dir:
 		log_file = os.path.join(log_dir, "eloquence-host.log")
 		try:
-			with open(log_file, "a"):
+			with open(log_file, "w"):
 				pass
 		except OSError:
 			log_file = None
@@ -206,15 +266,20 @@ class EloquenceRuntime:
 		self._speaking = False
 		self._saw_final_index = False
 		self._pending_indexes: list[int] = []
+		self._send_disabled = False
 
 	# ------------------------------------------------------------------
 	# Communication helpers
 	def _send_event(self, event: str, **payload: object) -> None:
+		if self._send_disabled:
+			return
 		# LOGGER.debug("Sending event %s", event)
 		try:
 			self._conn.send({"type": "event", "event": event, "payload": payload})
 		except Exception:
-			LOGGER.exception("Failed to send event %s", event)
+			if not self._send_disabled:
+				self._send_disabled = True
+				LOGGER.error("Failed to send event %s; further sends disabled", event)
 
 	def _send_response(self, msg_id: int, **payload: object) -> None:
 		# LOGGER.debug("Sending response for %s", msg_id)
@@ -295,7 +360,9 @@ class EloquenceRuntime:
 					path = os.path.join(dictionary_dir, candidate)
 					if os.path.exists(path):
 						# LOGGER.debug("Loading dictionary index=%s file=%s", index, path)
-						self._dll.eciLoadDict(self._handle, self._dictionary_handle, index, path.encode("mbcs"))
+						self._dll.eciLoadDict(
+							self._handle, self._dictionary_handle, index, path.encode("mbcs")
+						)
 						break
 			self._loaded_dictionary_languages.add(language_code)
 		self._dll.eciSetDict(self._handle, self._dictionary_handle)
@@ -481,7 +548,10 @@ class HostController:
 			handler = self._handlers.get(command)
 			if handler is None:
 				LOGGER.error("Unknown command %s", command)
-				self._conn.send({"type": "response", "id": msg_id, "error": "unknownCommand"})
+				try:
+					self._conn.send({"type": "response", "id": msg_id, "error": "unknownCommand"})
+				except Exception:
+					LOGGER.error("Failed to send error response for unknown command %s", command)
 				continue
 			try:
 				payload = handler(**message.get("payload", {}))
@@ -491,7 +561,10 @@ class HostController:
 					break
 			except Exception as exc:
 				LOGGER.exception("Command %s failed", command)
-				self._conn.send({"type": "response", "id": msg_id, "error": str(exc)})
+				try:
+					self._conn.send({"type": "response", "id": msg_id, "error": str(exc)})
+				except Exception:
+					LOGGER.error("Failed to send error response for command %s", command)
 
 	# ------------------------------------------------------------------
 	# Command handlers
@@ -547,21 +620,14 @@ class HostController:
 
 def main() -> None:
 	parser = argparse.ArgumentParser(description="Eloquence 32-bit helper")
-	parser.add_argument("--address", required=True)
-	parser.add_argument("--authkey", required=True)
+	parser.add_argument("--pipe", required=True, help="Host Channel named pipe to connect to")
 	parser.add_argument("--log-dir", default=None)
 	args = parser.parse_args()
 
 	configure_logging(args.log_dir)
-	LOGGER.info("Connecting to controller at %s", args.address)
+	LOGGER.info("Opening Host Channel at %s", args.pipe)
 
-	host, port_str = args.address.split(":")
-	address = (host, int(port_str))
-	authkey = bytes.fromhex(args.authkey)
-	sock = socket.create_connection(address)
-	sock.sendall(authkey)
-	sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-	conn = IpcConnection(sock)
+	conn = connect_to_host_channel(args.pipe)
 	controller = HostController(conn)
 	controller.serve_forever()
 

@@ -6,7 +6,6 @@ import itertools
 import logging
 import os
 import struct
-import socket
 
 import queue
 import shlex
@@ -16,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 from . import _eloquence_ipc as _ipc
+from . import _eloquence_job as _job
 
 import config
 import nvwave
@@ -25,7 +25,11 @@ LOGGER = logging.getLogger(__name__)
 
 HOST_EXECUTABLE = "eloquence_host32.exe"
 HOST_SCRIPT = "host_eloquence32.py"
-AUTH_KEY_BYTES = 16
+# How long to wait for the Eloquence Host Process to open the Host Channel.
+HOST_CONNECT_TIMEOUT = 10.0
+# Seconds to let the host exit on its own before we terminate it. A onefile
+# PyInstaller build only removes its _MEI temp directory on a clean exit.
+HOST_EXIT_TIMEOUT = 3.0
 
 
 # Audio handling -----------------------------------------------------------------
@@ -325,12 +329,14 @@ AudioChunk = Tuple[bytes, Optional[int], bool, int]
 class HostProcess:
 	process: subprocess.Popen
 	connection: Any
-	listener: socket.socket
+	listener: _ipc.PipeListener
 
 
 class EloquenceHostClient:
 	def __init__(self) -> None:
 		self._host: Optional[HostProcess] = None
+		# Outlives every Eloquence Host Process we spawn; closed only when NVDA exits.
+		self._job: Optional[_job.HostJob] = None
 		self._pending: Dict[int, threading.Event] = {}
 		self._responses: Dict[int, Dict[str, Any]] = {}
 		self._receiver: Optional[threading.Thread] = None
@@ -350,25 +356,24 @@ class EloquenceHostClient:
 		if self._host:
 			return
 		addon_dir = os.path.abspath(os.path.dirname(__file__))
-		authkey = os.urandom(AUTH_KEY_BYTES)
 		listener = _ipc.create_listener()
-		port = listener.getsockname()[1]
 		cmd = list(self._resolve_host_executable(addon_dir))
 		cmd.extend(
 			[
-				"--address",
-				f"127.0.0.1:{port}",
-				"--authkey",
-				authkey.hex(),
+				"--pipe",
+				listener.name,
 				"--log-dir",
 				addon_dir,
 			]
 		)
 		LOGGER.info("Launching Eloquence host: %s", cmd)
 		proc = subprocess.Popen(cmd, cwd=addon_dir)
+		# Must precede accept(): the Host Channel identifies its peer by asking
+		# whether that process is in this job.
+		self._adopt_into_job(proc)
 		try:
-			conn = _ipc.accept_authenticated(listener, authkey)
-		except (TimeoutError, OSError) as exc:
+			conn = listener.accept(self._job, HOST_CONNECT_TIMEOUT)
+		except (_ipc.HostChannelError, OSError) as exc:
 			LOGGER.error("Eloquence host failed to connect: %s", exc)
 			exit_code = proc.poll()
 			if exit_code is not None:
@@ -389,6 +394,28 @@ class EloquenceHostClient:
 		self._host = HostProcess(process=proc, connection=conn, listener=listener)
 		self._receiver = threading.Thread(target=self._receiver_loop, daemon=True)
 		self._receiver.start()
+
+	def _adopt_into_job(self, proc: subprocess.Popen) -> None:
+		"""Put a freshly spawned Eloquence Host Process into the kill-on-close Job Object.
+
+		Called before the Host Channel is accepted so that an Eloquence Host Process
+		that never connects is covered too.  Purely a backstop: shutdown() still drives the
+		cooperative exit, and the job only decides what happens when NVDA dies
+		without getting to run it.
+		"""
+		if self._job is None:
+			self._job = _job.HostJob.create()
+		if self._job is None:
+			return
+		try:
+			handle = int(proc._handle)
+		except Exception:
+			LOGGER.warning(
+				"Eloquence Host Process exposes no handle; skipping Job Object",
+				exc_info=True,
+			)
+			return
+		self._job.assign(handle)
 
 	def _resolve_host_executable(self, addon_dir: str) -> Sequence[str]:
 		override = os.environ.get("ELOQUENCE_HOST_COMMAND")
@@ -458,16 +485,9 @@ class EloquenceHostClient:
 		while True:
 			try:
 				message = connection.recv()
-			except socket.timeout:
-				if self._host and self._host.process.poll() is not None:
-					LOGGER.error("Host process exited (code %s)", self._host.process.returncode)
-					for msg_id, event in list(self._pending.items()):
-						self._responses[msg_id] = {"error": "hostExited"}
-						event.set()
-					self._pending.clear()
-					break
-				continue  # Host still alive, just busy
 			except (EOFError, ConnectionAbortedError, OSError):
+				# A dead Eloquence Host Process breaks the pipe immediately, so
+				# this covers the exit the socket transport needed a poll to spot.
 				LOGGER.info("Host connection closed")
 				for msg_id, event in list(self._pending.items()):
 					self._responses[msg_id] = {"error": "connectionClosed"}
@@ -594,11 +614,25 @@ class EloquenceHostClient:
 			self.send_command("delete")
 		except Exception:
 			LOGGER.exception("Failed to delete host cleanly")
+		# Let the host exit on its own before touching the socket. Closing the
+		# connection first resets it underneath the host, which turns every
+		# in-flight send into a ConnectionResetError; those escape the host's
+		# serve loop as an unhandled exception and, in a --noconsole build,
+		# surface as an error dialog.
+		exited = False
+		try:
+			self._host.process.wait(timeout=HOST_EXIT_TIMEOUT)
+			exited = True
+		except Exception:
+			LOGGER.warning(
+				"Eloquence host did not exit within %ss; terminating",
+				HOST_EXIT_TIMEOUT,
+			)
 		# Wait for receiver thread to finish (it will get EOFError and exit)
 		if self._receiver:
 			self._receiver.join(timeout=2)
 			self._receiver = None
-		# Now close connections and terminate process
+		# Now close connections, and terminate the process only if it is still up.
 		try:
 			self._host.connection.close()
 		except Exception:
@@ -607,15 +641,19 @@ class EloquenceHostClient:
 			self._host.listener.close()
 		except Exception:
 			pass
-		try:
-			self._host.process.terminate()
-			self._host.process.wait(timeout=2)
-		except Exception:
-			LOGGER.exception("Failed to terminate host process")
+		if not exited:
+			# terminate() is TerminateProcess on Windows and cannot be blocked, so
+			# the bootloader never gets to clean up its _MEI directory. Only
+			# reached when the graceful wait above timed out.
 			try:
-				self._host.process.kill()
+				self._host.process.terminate()
+				self._host.process.wait(timeout=2)
 			except Exception:
-				pass
+				LOGGER.exception("Failed to terminate host process")
+				try:
+					self._host.process.kill()
+				except Exception:
+					pass
 		self._host = None
 
 
@@ -669,20 +707,6 @@ langs = {
 	"jpn": (524288, "Japanese"),  # 0x00080000
 	"kor": (655360, "Korean"),
 }  # 0x000A0000
-
-# Language to encoding mapping for Asian languages
-# Using same codecs as IBMTTS which works correctly
-LANG_ENCODINGS = {
-	"chs": "gb18030",  # Mandarin Chinese
-	"jpn": "cp932",  # Japanese (Shift-JIS compatible)
-	"kor": "cp949",  # Korean
-}
-
-# Voice ID to language code mapping (inverse of langs)
-VOICE_ID_TO_LANG = {voice_id: lang_code for lang_code, (voice_id, _) in langs.items()}
-
-# Current language code (updated when voice is set)
-_current_lang = "enu"
 
 
 def _ascii_safe_dir(directory):
@@ -795,7 +819,7 @@ def _sync_eci_ini_paths(eloquence_dir):
 
 
 def initialize(indexCallback=None):
-	global onIndexReached, _current_lang, _current_sample_rate_mode, _current_variant
+	global onIndexReached, _current_sample_rate_mode, _current_variant
 	try:
 		config_default = int(config.conf.get("eloquence", {}).get("sampleRate", 1))
 	except (TypeError, ValueError):
@@ -805,7 +829,6 @@ def initialize(indexCallback=None):
 	configured_mode = _read_persisted_rate_mode(config_default)
 	_current_sample_rate_mode = configured_mode
 	_prepare_syn_engines(configured_mode)
-
 	eci_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "eloquence", "eci.dll"))
 	# Repair ECI.INI before the host loads the engine so voices resolve no
 	# matter where this add-on folder was copied from.
@@ -815,7 +838,6 @@ def initialize(indexCallback=None):
 	_ensure_synth_worker()
 	onIndexReached = indexCallback
 	voice_conf = config.conf.get("speech", {}).get("eci", {})
-	_current_lang = voice_conf.get("voice", "enu")
 	try:
 		_current_variant = int(voice_conf.get("variant", 0) or 0)
 	except (TypeError, ValueError):
@@ -823,7 +845,7 @@ def initialize(indexCallback=None):
 	payload = {
 		"eciPath": eci_path,
 		"dataDirectory": os.path.join(os.path.dirname(eci_path)),
-		"language": _current_lang,
+		"language": voice_conf.get("voice", "enu"),
 		"enableAbbreviationDict": config.conf.get("speech", {}).get("eci", {}).get("ABRDICT", False),
 		"enablePhrasePrediction": config.conf.get("speech", {}).get("eci", {}).get("phrasePrediction", False),
 		"voiceVariant": _current_variant,
@@ -890,19 +912,8 @@ def restart_for_sample_rate(mode, indexCallback=None, variant=None):
 	LOGGER.info("Reloaded Eloquence host for sample-rate mode %d", mode)
 
 
-def speak(text):
+def speak(text_bytes):
 	try:
-		encoding = LANG_ENCODINGS.get(_current_lang, "mbcs")
-		if encoding == "mbcs":
-			# Use Windows best-fit mapping so characters like Đ→D and ł→l
-			# instead of replacing them immediately with question marks.
-			from ._text_preprocessing import _wchar_to_mbcs
-
-			text_bytes = _wchar_to_mbcs(text)
-			if text_bytes is None:
-				text_bytes = text.encode("mbcs", errors="replace")
-		else:
-			text_bytes = text.encode(encoding, errors="replace")
 		_client.send_command("addText", text=text_bytes, wait=False)
 	except Exception:
 		LOGGER.exception("Failed to send text to synthesizer")
@@ -965,7 +976,6 @@ def terminate():
 
 
 def set_voice(vl):
-	global _current_lang
 	try:
 		voice_id = int(vl)
 		# Save the user-configured voice params before the language change.
@@ -1009,9 +1019,7 @@ def set_voice(vl):
 			value = int(voice_params.get(pr, 0) * multiplier + offset)
 			value = max(0, min(value, PARAM_MAX.get(pr, 100)))
 			setVParam(pr, value, temporary=True)
-		# Update current language for proper encoding
-		_current_lang = VOICE_ID_TO_LANG.get(voice_id, "enu")
-		LOGGER.debug("Voice changed to ID %d, language code: %s", voice_id, _current_lang)
+		LOGGER.debug("Voice changed to ID %d", voice_id)
 	except Exception:
 		LOGGER.exception("Failed to set voice")
 
