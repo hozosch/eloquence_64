@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 from . import _eloquence_ipc as _ipc
 from . import _eloquence_job as _job
+from ._bandwidth_shaping import HighShelfFilter
 
 import config
 import nvwave
@@ -38,7 +39,11 @@ _ECI_BASE_RATE_MAP = {
 	0: 8000,
 	1: 11025,
 	2: 16000,  # final native16 treatment
+	3: 16000,  # native16 with a -3 dB bandwidth-extension shelf
+	4: 16000,  # native16 with a -6 dB bandwidth-extension shelf
 }
+_BANDWIDTH_SHELF_DB = {3: -3.0, 4: -6.0}
+_BANDWIDTH_SHELF_HZ = 5500.0
 _current_sample_rate_mode = 1
 _current_variant = 0
 _ECI_SAMPLE_RATE_PARAM = 5
@@ -137,7 +142,7 @@ def _prepare_syn_engines(mode):
 		mode = int(mode)
 	except (TypeError, ValueError):
 		mode = 1
-	target_ext = {2: ".p16"}.get(mode)
+	target_ext = {2: ".p16", 3: ".p16", 4: ".p16"}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
 		dst = next((os.path.join(base, n) for n in candidates if os.path.exists(os.path.join(base, n))), None)
@@ -155,7 +160,11 @@ def _prepare_syn_engines(mode):
 				_apply_p16(dst, os.path.join(base, stem + target_ext), True)
 		except Exception:
 			LOGGER.exception("Could not switch %s SYN engine", stem)
-	labels = {2: "native 16 kHz"}
+	labels = {
+		2: "native 16 kHz",
+		3: "native 16 kHz with -3 dB extension shelf",
+		4: "native 16 kHz with -6 dB extension shelf",
+	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
 
@@ -164,7 +173,7 @@ def get_sample_rate() -> int:
 
 
 def set_sample_rate(mode) -> None:
-	"""Select 0=8 kHz, 1=11.025 kHz, or 2=final native 16 kHz tuning."""
+	"""Select 8, 11.025, or one of the native 16 kHz comparison modes."""
 	global _current_sample_rate_mode, _current_variant
 	try:
 		mode = int(mode)
@@ -199,6 +208,13 @@ class AudioWorker(threading.Thread):
 		self._running = True
 		self._stopping = False
 		self._player_lock = threading.RLock()
+		gain_db = _BANDWIDTH_SHELF_DB.get(get_sample_rate())
+		self._bandwidth_filter = (
+			HighShelfFilter(_ECI_BASE_RATE_MAP[get_sample_rate()], _BANDWIDTH_SHELF_HZ, gain_db)
+			if gain_db is not None
+			else None
+		)
+		self._filter_sequence: Optional[int] = None
 
 	def run(self) -> None:
 		pending_audio: Optional[AudioChunk] = None
@@ -210,6 +226,9 @@ class AudioWorker(threading.Thread):
 			if chunk is None:
 				break
 			data, index, is_final, seq = chunk
+			if self._bandwidth_filter and seq != self._filter_sequence:
+				self._bandwidth_filter.reset()
+				self._filter_sequence = seq
 			if pending_audio and pending_audio[3] < self._client._sequence:
 				pending_audio = None
 			if seq < self._client._sequence:
@@ -265,6 +284,8 @@ class AudioWorker(threading.Thread):
 		try:
 			with self._player_lock:
 				if not self._stopping and self._player:
+					if self._bandwidth_filter:
+						data = self._bandwidth_filter.process(data)
 					self._player.feed(data, onDone=wrapped_on_done)
 		except FileNotFoundError:
 			LOGGER.warning("Sound device not found during feed")
