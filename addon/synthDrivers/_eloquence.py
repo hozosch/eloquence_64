@@ -38,6 +38,7 @@ _ECI_BASE_RATE_MAP = {
 	0: 8000,
 	1: 11025,
 	2: 16000,  # final native16 treatment
+	3: 16000,  # native16 with the unshaped native sibilance path
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
@@ -137,14 +138,18 @@ def _prepare_syn_engines(mode):
 		mode = int(mode)
 	except (TypeError, ValueError):
 		mode = 1
-	target_ext = {2: ".p16"}.get(mode)
+	target_ext = {2: ".p16", 3: ".p16n"}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
 		dst = next((os.path.join(base, n) for n in candidates if os.path.exists(os.path.join(base, n))), None)
 		if not dst:
 			LOGGER.warning("Could not locate active SYN for %s", stem)
 			continue
-		patches = [os.path.join(base, stem + ext) for ext in (".p16",) if os.path.exists(os.path.join(base, stem + ext))]
+		patches = [
+			os.path.join(base, stem + ext)
+			for ext in (".p16", ".p16n")
+			if os.path.exists(os.path.join(base, stem + ext))
+		]
 		try:
 			# Revert whichever compact native variant is currently active.
 			for pp in patches:
@@ -155,7 +160,7 @@ def _prepare_syn_engines(mode):
 				_apply_p16(dst, os.path.join(base, stem + target_ext), True)
 		except Exception:
 			LOGGER.exception("Could not switch %s SYN engine", stem)
-	labels = {2: "native 16 kHz"}
+	labels = {2: "native 16 kHz", 3: "native 16 kHz with native sibilance"}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
 
@@ -164,7 +169,7 @@ def get_sample_rate() -> int:
 
 
 def set_sample_rate(mode) -> None:
-	"""Select 0=8 kHz, 1=11.025 kHz, or 2=final native 16 kHz tuning."""
+	"""Select 8, 11.025, or one of the native 16 kHz comparison modes."""
 	global _current_sample_rate_mode, _current_variant
 	try:
 		mode = int(mode)
