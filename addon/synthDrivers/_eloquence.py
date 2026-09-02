@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 from . import _eloquence_ipc as _ipc
 from . import _eloquence_job as _job
-from ._bandwidth_shaping import HighShelfFilter
+from ._bandwidth_shaping import CascadedHighShelfFilter
 
 import config
 import nvwave
@@ -40,12 +40,17 @@ _ECI_BASE_RATE_MAP = {
 	1: 11025,
 	2: 16000,  # final native16 treatment
 	3: 16000,  # native16 with the true native sibilance path
-	4: 16000,  # native sibilance plus a +10 dB bandwidth-extension shelf
+	4: 16000,  # native sibilance plus the late +10 dB extension shelf
+	5: 16000,  # native sibilance plus a gently rising extension curve
+	6: 16000,  # native sibilance plus a medium rising extension curve
+	7: 16000,  # native sibilance plus an early rising extension curve
 }
-_BANDWIDTH_SHELF_DB = {4: 10.0}
-# Center the transition below 5.5 kHz so the newly available band approaches
-# the full +10 dB quickly while the speech band remains effectively unchanged.
-_BANDWIDTH_SHELF_HZ = 4800.0
+_BANDWIDTH_SHELVES = {
+	4: ((4800.0, 10.0, 1.4),),
+	5: ((3000.0, 3.0, 1.0), (5000.0, 7.0, 1.2)),
+	6: ((2700.0, 4.0, 1.0), (4800.0, 6.0, 1.2)),
+	7: ((2400.0, 5.0, 1.0), (4600.0, 5.0, 1.2)),
+}
 _current_sample_rate_mode = 1
 _current_variant = 0
 _ECI_SAMPLE_RATE_PARAM = 5
@@ -144,7 +149,7 @@ def _prepare_syn_engines(mode):
 		mode = int(mode)
 	except (TypeError, ValueError):
 		mode = 1
-	target_ext = {2: ".p16", 3: ".p16n", 4: ".p16n"}.get(mode)
+	target_ext = {2: ".p16", 3: ".p16n", 4: ".p16n", 5: ".p16n", 6: ".p16n", 7: ".p16n"}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
 		dst = next((os.path.join(base, n) for n in candidates if os.path.exists(os.path.join(base, n))), None)
@@ -169,7 +174,10 @@ def _prepare_syn_engines(mode):
 	labels = {
 		2: "native 16 kHz",
 		3: "native 16 kHz with true native sibilance",
-		4: "native 16 kHz with true native sibilance and +10 dB extension shelf",
+		4: "native 16 kHz with native sibilance and late extension boost",
+		5: "native 16 kHz with native sibilance and gentle extension rise",
+		6: "native 16 kHz with native sibilance and medium extension rise",
+		7: "native 16 kHz with native sibilance and early extension rise",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
@@ -214,10 +222,10 @@ class AudioWorker(threading.Thread):
 		self._running = True
 		self._stopping = False
 		self._player_lock = threading.RLock()
-		gain_db = _BANDWIDTH_SHELF_DB.get(get_sample_rate())
+		curve = _BANDWIDTH_SHELVES.get(get_sample_rate())
 		self._bandwidth_filter = (
-			HighShelfFilter(_ECI_BASE_RATE_MAP[get_sample_rate()], _BANDWIDTH_SHELF_HZ, gain_db)
-			if gain_db is not None
+			CascadedHighShelfFilter(_ECI_BASE_RATE_MAP[get_sample_rate()], curve)
+			if curve is not None
 			else None
 		)
 		self._filter_sequence: Optional[int] = None

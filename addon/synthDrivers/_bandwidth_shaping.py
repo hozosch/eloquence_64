@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import array
 import math
+from typing import Sequence, Tuple
 
 
 class HighShelfFilter:
@@ -49,3 +50,19 @@ class HighShelfFilter:
 		self._z1 = z1
 		self._z2 = z2
 		return samples.tobytes()
+
+
+class CascadedHighShelfFilter:
+	"""Apply several shelves as one continuous comparison curve."""
+
+	def __init__(self, sample_rate: int, stages: Sequence[Tuple[float, float, float]]) -> None:
+		self._stages = [HighShelfFilter(sample_rate, frequency, gain_db, slope) for frequency, gain_db, slope in stages]
+
+	def reset(self) -> None:
+		for stage in self._stages:
+			stage.reset()
+
+	def process(self, data: bytes) -> bytes:
+		for stage in self._stages:
+			data = stage.process(data)
+		return data

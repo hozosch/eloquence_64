@@ -57,6 +57,25 @@ class HighShelfFilterTests(unittest.TestCase):
 		with self.assertRaises(ValueError):
 			shaping.HighShelfFilter(16000, 4800, 10.0, slope=0.0)
 
+	def test_cascaded_curve_preserves_state_across_chunks(self):
+		stages = ((2700.0, 4.0, 1.0), (4800.0, 6.0, 1.2))
+		data = _tone(4000, length=4000)
+		whole = shaping.CascadedHighShelfFilter(16000, stages).process(data)
+		chunked_filter = shaping.CascadedHighShelfFilter(16000, stages)
+		chunked = chunked_filter.process(data[:3000]) + chunked_filter.process(data[3000:])
+		self.assertEqual(whole, chunked)
+
+	def test_cascaded_curve_starts_earlier_but_still_ends_at_ten_db(self):
+		stages = ((2700.0, 4.0, 1.0), (4800.0, 6.0, 1.2))
+		filt = shaping.CascadedHighShelfFilter(16000, stages)
+		mid_ratio = _rms(filt.process(_tone(4000))) / _rms(_tone(4000))
+		filt.reset()
+		high_ratio = _rms(filt.process(_tone(7500))) / _rms(_tone(7500))
+		self.assertGreater(mid_ratio, 1.65)
+		self.assertLess(mid_ratio, 1.75)
+		self.assertGreater(high_ratio, 3.1)
+		self.assertLess(high_ratio, 3.3)
+
 
 if __name__ == "__main__":
 	unittest.main()
