@@ -58,6 +58,22 @@ def test_five_cascade_patches_only_restore_the_original_cascade_count(tmp_path):
 		assert differences[0] != 29
 
 
+def test_six_parallel_formant_patches_split_voice_and_consonant_counts(tmp_path):
+	builder = _load_patch_builder()
+	for native_s in sorted(PATCH_DIR.glob("*.p16n")):
+		generated = tmp_path / native_s.with_suffix(".p16c6").name
+		builder.make_six_parallel_formant_patch(native_s, generated)
+		committed = native_s.with_suffix(".p16c6")
+		assert generated.read_bytes() == committed.read_bytes()
+
+		_original_size, _patched_size, runs = builder._read_runs(committed.read_bytes())
+		cascade_run = next(run for run in runs if run[1] == b"\x8b\x85\x36\x0a")
+		assert cascade_run[2] == b"\xb8\x05\x00\x00"
+		parallel_run = next(run for run in runs if run[1] == builder.PARALLEL_FORMANT_COUNT_LOAD)
+		assert parallel_run[2] == b"\xba\x06\x00\x00\x00\x90"
+		assert parallel_run[0] == cascade_run[0] + 0x1DE7
+
+
 def test_wide_b6_patches_hook_only_the_sixth_bandwidth_load(tmp_path):
 	builder = _load_patch_builder()
 	for native_s in sorted(PATCH_DIR.glob("*.p16n")):
@@ -90,3 +106,16 @@ def test_wide_b6_patches_apply_to_bundled_engines(tmp_path):
 				patched[offset : offset + len(new)] = new
 			hook = next(new for _offset, old, new in runs if old == builder.B6_LOAD)
 			assert hook[:1] == b"\xe8"
+
+
+def test_six_parallel_formant_patches_apply_to_bundled_engines():
+	builder = _load_patch_builder()
+	for syn in sorted(PATCH_DIR.glob("*.syn")):
+		patch = syn.with_suffix(".p16c6")
+		original = bytearray(syn.read_bytes())
+		original_size, patched_size, runs = builder._read_runs(patch.read_bytes())
+		assert len(original) == original_size
+		patched = original + bytearray(patched_size - original_size)
+		for offset, old, new in runs:
+			assert patched[offset : offset + len(old)] == old
+			patched[offset : offset + len(new)] = new

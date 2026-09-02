@@ -13,6 +13,7 @@ TABLE_SUFFIX = bytes.fromhex(
 	"497e543f9d1ee8bf664250bf"
 )
 B6_LOAD = bytes.fromhex("d947548b4758")
+PARALLEL_FORMANT_COUNT_LOAD = bytes.fromhex("8b964b180000")
 XFLT_ENTRY = bytes.fromhex("50e80000000058d98046000000")
 
 
@@ -65,6 +66,30 @@ def make_five_cascade_patch(source: Path, destination: Path) -> None:
 	# cascade formants to five.
 	data[matches[0] + 1] = 5
 	destination.write_bytes(data)
+
+
+def make_six_parallel_formant_patch(source: Path, destination: Path) -> None:
+	"""Keep five cascade formants while processing six parallel formants."""
+	original_size, patched_size, runs = _read_runs(source.read_bytes())
+	cascade_runs = [run for run in runs if run[1] == b"\x8b\x85\x36\x0a" and run[2] == b"\xb8\x06\x00\x00"]
+	if len(cascade_runs) != 1:
+		raise ValueError(f"Could not uniquely locate formant-count instruction in {source}")
+
+	# Restore the shared count to five, then override only the later parallel
+	# filter loop with six. The voiced cascade remains at five while Eloquence's
+	# native sixth parallel-formant parameters become active for consonants.
+	count_offset, _count_old, _count_new = cascade_runs[0]
+	parallel_count_offset = count_offset + 0x1DE7
+	patched_runs = []
+	for offset, old, new in runs:
+		if offset == count_offset:
+			patched_runs.append((offset, old, b"\xb8\x05\x00\x00"))
+		else:
+			patched_runs.append((offset, old, new))
+	patched_runs.append(
+		(parallel_count_offset, PARALLEL_FORMANT_COUNT_LOAD, b"\xba\x06\x00\x00\x00\x90")
+	)
+	_write_runs(destination, original_size, patched_size, patched_runs)
 
 
 def _read_runs(data: bytes) -> tuple[int, int, list[tuple[int, bytes, bytes]]]:
@@ -155,6 +180,7 @@ def main() -> None:
 		native_s = source.with_suffix(".p16n")
 		make_native_s_patch(source, native_s)
 		make_five_cascade_patch(native_s, source.with_suffix(".p16b5"))
+		make_six_parallel_formant_patch(native_s, source.with_suffix(".p16c6"))
 		make_b6_bandwidth_patch(native_s, source.with_suffix(".p16b15"), 1.5)
 		make_b6_bandwidth_patch(native_s, source.with_suffix(".p16b20"), 2.0)
 		make_b6_bandwidth_patch(native_s, source.with_suffix(".p16b30"), 3.0)

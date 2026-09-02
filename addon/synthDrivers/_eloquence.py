@@ -53,6 +53,7 @@ _ECI_BASE_RATE_MAP = {
 	14: 16000,  # measured balance with B6 bandwidth multiplied by 4.0
 	15: 16000,  # 3x B6 with the measured shelf restricted to voiced audio
 	16: 16000,  # 4x B6 with the measured shelf restricted to voiced audio
+	17: 16000,  # five voiced cascades with six native parallel consonant filters
 }
 _BANDWIDTH_SHELVES = {
 	4: ((4800.0, 10.0, 1.4),),
@@ -68,6 +69,7 @@ _BANDWIDTH_SHELVES = {
 	14: ((3430.0, 8.0, 0.406),),
 	15: ((3430.0, 8.0, 0.406),),
 	16: ((3430.0, 8.0, 0.406),),
+	17: ((3430.0, 8.0, 0.406),),
 }
 _VOICED_ONLY_SHELF_MODES = frozenset((15, 16))
 _current_sample_rate_mode = 1
@@ -184,6 +186,7 @@ def _prepare_syn_engines(mode):
 		14: ".p16b40",
 		15: ".p16b30",
 		16: ".p16b40",
+		17: ".p16c6",
 	}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
@@ -193,7 +196,7 @@ def _prepare_syn_engines(mode):
 			continue
 		patches = [
 			os.path.join(base, stem + ext)
-			for ext in (".p16", ".p16n", ".p16b5", ".p16b15", ".p16b20", ".p16b30", ".p16b40")
+			for ext in (".p16", ".p16n", ".p16b5", ".p16b15", ".p16b20", ".p16b30", ".p16b40", ".p16c6")
 			if os.path.exists(os.path.join(base, stem + ext))
 		]
 		try:
@@ -222,6 +225,7 @@ def _prepare_syn_engines(mode):
 		14: "native 16 kHz with measured balance and 4x B6 bandwidth",
 		15: "native 16 kHz with 3x B6 bandwidth and voiced-only shelf",
 		16: "native 16 kHz with 4x B6 bandwidth and voiced-only shelf",
+		17: "native 16 kHz with five voiced cascades and six parallel consonant filters",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
