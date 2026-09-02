@@ -13,7 +13,7 @@ TABLE_SUFFIX = bytes.fromhex(
 	"497e543f9d1ee8bf664250bf"
 )
 B6_LOAD = bytes.fromhex("d947548b4758")
-PARALLEL_FORMANT_COUNT_LOAD = bytes.fromhex("8b964b180000")
+CASCADE_PROCESS_COUNT_LOAD = bytes.fromhex("8b864b180000")
 XFLT_ENTRY = bytes.fromhex("50e80000000058d98046000000")
 
 
@@ -75,21 +75,15 @@ def make_six_parallel_formant_patch(source: Path, destination: Path) -> None:
 	if len(cascade_runs) != 1:
 		raise ValueError(f"Could not uniquely locate formant-count instruction in {source}")
 
-	# Restore the shared count to five, then override only the later parallel
-	# filter loop with six. The voiced cascade remains at five while Eloquence's
-	# native sixth parallel-formant parameters become active for consonants.
+	# Keep the shared formant count at six so coefficient setup and the parallel
+	# consonant path both initialize all six filters. Override only the later
+	# voiced-cascade processing loop with five.
 	count_offset, _count_old, _count_new = cascade_runs[0]
-	parallel_count_offset = count_offset + 0x1DE7
-	patched_runs = []
-	for offset, old, new in runs:
-		if offset == count_offset:
-			patched_runs.append((offset, old, b"\xb8\x05\x00\x00"))
-		else:
-			patched_runs.append((offset, old, new))
-	patched_runs.append(
-		(parallel_count_offset, PARALLEL_FORMANT_COUNT_LOAD, b"\xba\x06\x00\x00\x00\x90")
+	cascade_process_count_offset = count_offset + 0x1A79
+	runs.append(
+		(cascade_process_count_offset, CASCADE_PROCESS_COUNT_LOAD, b"\xb8\x05\x00\x00\x00\x90")
 	)
-	_write_runs(destination, original_size, patched_size, patched_runs)
+	_write_runs(destination, original_size, patched_size, runs)
 
 
 def _read_runs(data: bytes) -> tuple[int, int, list[tuple[int, bytes, bytes]]]:

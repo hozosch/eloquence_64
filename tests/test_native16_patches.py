@@ -68,10 +68,10 @@ def test_six_parallel_formant_patches_split_voice_and_consonant_counts(tmp_path)
 
 		_original_size, _patched_size, runs = builder._read_runs(committed.read_bytes())
 		cascade_run = next(run for run in runs if run[1] == b"\x8b\x85\x36\x0a")
-		assert cascade_run[2] == b"\xb8\x05\x00\x00"
-		parallel_run = next(run for run in runs if run[1] == builder.PARALLEL_FORMANT_COUNT_LOAD)
-		assert parallel_run[2] == b"\xba\x06\x00\x00\x00\x90"
-		assert parallel_run[0] == cascade_run[0] + 0x1DE7
+		assert cascade_run[2] == b"\xb8\x06\x00\x00"
+		voice_run = next(run for run in runs if run[1] == builder.CASCADE_PROCESS_COUNT_LOAD)
+		assert voice_run[2] == b"\xb8\x05\x00\x00\x00\x90"
+		assert voice_run[0] == cascade_run[0] + 0x1A79
 
 
 def test_wide_b6_patches_hook_only_the_sixth_bandwidth_load(tmp_path):

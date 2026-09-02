@@ -196,7 +196,18 @@ def _prepare_syn_engines(mode):
 			continue
 		patches = [
 			os.path.join(base, stem + ext)
-			for ext in (".p16", ".p16n", ".p16b5", ".p16b15", ".p16b20", ".p16b30", ".p16b40", ".p16c6")
+			# Check derived variants before their base patches: a derived patch
+			# contains every run from .p16n and would otherwise be mistaken for it.
+			for ext in (
+				".p16c6",
+				".p16b40",
+				".p16b30",
+				".p16b20",
+				".p16b15",
+				".p16b5",
+				".p16n",
+				".p16",
+			)
 			if os.path.exists(os.path.join(base, stem + ext))
 		]
 		try:
