@@ -24,7 +24,8 @@ nativeFricationHook:
 	pushl $FILTER_MODE
 	pushl %eax
 	pushl %ecx
-	pushl 0x0d9b(%esi)
+	leal 0x0d9b(%esi), %edx
+	pushl %edx
 	call processNativeFrication
 	addl $16, %esp
 .Ldone:
