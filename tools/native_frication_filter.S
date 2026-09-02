@@ -15,7 +15,6 @@ nativeFricationHook:
 	movl %edx, 4(%eax)
 	movl %edx, 8(%eax)
 	movl %edx, 12(%eax)
-	movl %edx, 16(%eax)
 	jmp .Ldone
 .Lactive:
 	movl 0x14f3(%esi), %ecx
@@ -37,6 +36,6 @@ nativeFricationHook:
 	.section .data
 	.balign 4
 filterState:
-	.float 0.0, 0.0, 0.0, 0.0, 0.0
+	.float 0.0, 0.0, 0.0, 0.0
 
 	.section .note.GNU-stack,"",@progbits

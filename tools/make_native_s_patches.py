@@ -17,21 +17,23 @@ CASCADE_PROCESS_COUNT_LOAD = bytes.fromhex("8b864b180000")
 FRICATION_BUFFER_LOAD = bytes.fromhex("8b942408010000")
 XFLT_ENTRY = bytes.fromhex("50e80000000058d98046000000")
 FRICATION_FILTER_CODE = bytes.fromhex(
-	"60e8000000005805ce01000083be5b18000000751231d2891089500489500889500c895010eb1d"
-	"8b8ef314000085c97e136a0050518d969b0d000052e80f00000083c410618b94240c010000c366"
-	"90905653e833010000057101000083ec048b7424148b5424188b5c241c85f60f8e130100008b4c"
-	"2410d9ee8d34b18d742600d901d9c0d9cadbf17606d9cad9e0d9cad902dcead9eed91424d9c3d9"
-	"c9dff4760fd9e0d9cceb0b2e8db4260000000090d9ccd888c8ffffffd888ccffffffd880d0ffff"
-	"ffd888d4ffffffd880d8ffffffdefcd9e8d91424d9ccdbf4dddc7719d9cbd888dcffffffd880e0"
-	"ffffffdecad9c9d9caeb098d7600dddbd9c9d9ca85dbdec2d9c9d912746ed94208d8e9d888e4ff"
-	"ffffd94204d888e8ffffffdec1d9c0d8c1d94204d8e9d95a04d9c9d888ecffffffd84208d8c0d8"
-	"6208d95a08dec1d9c0d888f0ffffffd9420cd8c1d980f4ffffffd91424dccbd8c9deebd9cad842"
-	"10d95a0cd980f8ffffffd8cadee9d95a10d888fcffffff83c104d959fc39ce0f85fcfeffffddd858"
-	"5b5ec38b0424c30000cdcc4c3f00000038cdcc4c3e00001643bd3786359a99193fcdcccc3e18aa"
-	"8f3e1f46c73d7c8f3840b235563f0118d23f646b2c3f0000003f00000000000000000000000000"
-	"00000000000000000000000000000000000000"
+	"60e80000000058052602000083be5b18000000750f31d2891089500489500889500ceb1d8b8ef3"
+	"14000085c97e136a0050518d969b0d000052e81200000083c410618b94240c010000c36690669066"
+	"90e86d01000081c2cb01000083ec1c837c242c008b4c24248b4424280f84ef000000d982a8ffff"
+	"ffd982acffffffd982b0ffffffd95c2418d982b4ffffffd95c2414d982b8ffffffd95c2410d982"
+	"bcffffffd95c240cd982c0ffffffd95c2408d982c4ffffffd95c2404d982c8ffffffd91c24d982"
+	"ccffffffd982d0ffffff85c97e7e8b5424208d0c8a8db42600000000d90283c204d9c2d8c9d800"
+	"d90424d8cad9442408d8cadee9d84004d918d9c9d84c2404d944240cd8cadee9d95804d9442410"
+	"d8c9d84008d9442414d8cad9c5d8cadee9d8400cd95808d9c9d84c2418d9c5d8cadee9d9580cd8"
+	"c9d95afc39d1759fddd8ddd8ddd8ddd8eb0d2e8d742600ddd8ddd8ddd8ddd883c41cc38d742600"
+	"d982d4ffffffd982d8ffffffd982dcffffffd95c2418d982e0ffffffd95c2414d982e4ffffffd95c"
+	"2410d982e8ffffffd95c240cd982ecffffffd95c2408d982f0ffffffd95c2404d982f4ffffffd91c"
+	"24d982f8ffffffd982fcffffffe90cffffff8b1424c300009a41f63e6aa4a43f18af0f3fa429ad3f"
+	"3f675a3f8055303e042d743dd359743e12d1a2be22d5a73f3d0a573fe0f48b3e487e403f8defdc"
+	"3e07e47f3fea1c183f0bbf2f3eac9d8f3cd569933e53890ebf8ca0ba3fae47613f000000000000"
+	"00000000000000000000000000000000000000000000"
 )
-FRICATION_FILTER_MODE_OFFSET = 50
+FRICATION_FILTER_MODE_OFFSET = 47
 
 
 def make_native_s_patch(source: Path, destination: Path) -> None:
@@ -186,7 +188,7 @@ def make_b6_bandwidth_patch(source: Path, destination: Path, multiplier: float) 
 	_write_runs(destination, original_size, patched_size, runs)
 
 
-def make_native_frication_patch(source: Path, destination: Path, full_treatment: bool) -> None:
+def make_native_frication_patch(source: Path, destination: Path, hybrid: bool) -> None:
 	"""Process only Eloquence's internal frication buffer before it is mixed."""
 	original_size, patched_size, runs = _read_runs(source.read_bytes())
 	count_runs = [run for run in runs if run[1] == b"\x8b\x85\x36\x0a" and run[2] == b"\xb8\x06\x00\x00"]
@@ -205,7 +207,7 @@ def make_native_frication_patch(source: Path, destination: Path, full_treatment:
 	filter_code_offset = original_size + entry_in_append + 0x100
 	code_in_append = entry_in_append + 0x100
 	code = bytearray(FRICATION_FILTER_CODE)
-	code[FRICATION_FILTER_MODE_OFFSET] = int(full_treatment)
+	code[FRICATION_FILTER_MODE_OFFSET] = int(hybrid)
 	if append_new[code_in_append : code_in_append + len(code)] != b"\x90" * len(code):
 		raise ValueError(f"Frication-filter code cave is not empty in {source}")
 	modified_append = bytearray(append_new)

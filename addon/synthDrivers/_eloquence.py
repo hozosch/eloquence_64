@@ -195,8 +195,8 @@ def _prepare_syn_engines(mode):
 	labels = {
 		2: "established v20 native 16 kHz reference",
 		3: "native 16 kHz baseline with native s, measured balance, and 4x B6",
-		18: "native 16 kHz baseline with adaptive frication smoothing",
-		19: "native 16 kHz baseline with former upsampler treatment on frication",
+		18: "native 16 kHz baseline with 22 kHz-like consonant contour",
+		19: "native 16 kHz baseline with hybrid consonant contour",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 

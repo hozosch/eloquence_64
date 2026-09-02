@@ -94,15 +94,15 @@ def test_wide_b6_patches_hook_only_the_sixth_bandwidth_load(tmp_path):
 
 def test_native_frication_patches_use_the_internal_noise_buffer(tmp_path):
 	builder = _load_patch_builder()
-	assert len(builder.FRICATION_FILTER_CODE) == 488
+	assert len(builder.FRICATION_FILTER_CODE) == 572
 	# d9b is an inline float array, not a stored pointer. The hook must pass
 	# &engine->d9b (LEA), never interpret its first audio sample as an address.
-	assert builder.FRICATION_FILTER_CODE[51:60] == bytes.fromhex("50518d969b0d000052")
+	assert builder.FRICATION_FILTER_CODE[48:57] == bytes.fromhex("50518d969b0d000052")
 	assert bytes.fromhex("ffb69b0d0000") not in builder.FRICATION_FILTER_CODE
 	for wide_b6 in sorted(PATCH_DIR.glob("*.p16b40")):
-		for suffix, full_treatment in ((".p16fs", False), (".p16fu", True)):
+		for suffix, hybrid in ((".p16fs", False), (".p16fu", True)):
 			generated = tmp_path / wide_b6.with_suffix(suffix).name
-			builder.make_native_frication_patch(wide_b6, generated, full_treatment)
+			builder.make_native_frication_patch(wide_b6, generated, hybrid)
 			committed = wide_b6.with_suffix(suffix)
 			assert generated.read_bytes() == committed.read_bytes()
 
@@ -117,7 +117,7 @@ def test_native_frication_patches_use_the_internal_noise_buffer(tmp_path):
 			call_target = frication_run[0] + 5 + struct.unpack_from("<i", frication_run[2], 1)[0]
 			assert call_target == original_size + code_offset
 			code = append[code_offset : code_offset + len(builder.FRICATION_FILTER_CODE)]
-			assert code[builder.FRICATION_FILTER_MODE_OFFSET] == int(full_treatment)
+			assert code[builder.FRICATION_FILTER_MODE_OFFSET] == int(hybrid)
 
 
 def test_wide_b6_patches_apply_to_bundled_engines(tmp_path):
