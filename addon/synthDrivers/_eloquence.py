@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 from . import _eloquence_ipc as _ipc
 from . import _eloquence_job as _job
-from ._bandwidth_shaping import CascadedHighShelfFilter, VoicedHighShelfFilter
+from ._bandwidth_shaping import CascadedHighShelfFilter
 
 import config
 import nvwave
@@ -38,69 +38,54 @@ HOST_EXIT_TIMEOUT = 3.0
 _ECI_BASE_RATE_MAP = {
 	0: 8000,
 	1: 11025,
-	2: 16000,  # final native16 treatment
-	3: 16000,  # native16 with the true native sibilance path
-	4: 16000,  # native sibilance plus the late +10 dB extension shelf
-	5: 16000,  # native sibilance plus a gently rising extension curve
-	6: 16000,  # native sibilance plus a medium rising extension curve
-	7: 16000,  # native sibilance plus an early rising extension curve
-	8: 16000,  # native sibilance plus the measured voiced-energy balance
-	9: 16000,  # measured voiced balance with the sixth cascade disabled
-	10: 16000,  # measured balance with B6 bandwidth multiplied by 1.5
-	11: 16000,  # measured balance with B6 bandwidth multiplied by 2.0
-	12: 16000,  # widened B6 plus a reduced global shelf for consonant balance
-	13: 16000,  # measured balance with B6 bandwidth multiplied by 3.0
-	14: 16000,  # measured balance with B6 bandwidth multiplied by 4.0
-	15: 16000,  # 3x B6 with the measured shelf restricted to voiced audio
-	16: 16000,  # 4x B6 with the measured shelf restricted to voiced audio
-	17: 16000,  # five voiced cascades with six native parallel consonant filters
+	2: 16000,  # established v20 native-16 reference
+	3: 16000,  # selected baseline: native s, measured balance, 4x B6
+	18: 16000,  # baseline plus adaptive smoothing of native frication
+	19: 16000,  # baseline plus the former upsampler treatment on native frication
 }
 _BANDWIDTH_SHELVES = {
-	4: ((4800.0, 10.0, 1.4),),
-	5: ((3000.0, 3.0, 1.0), (5000.0, 7.0, 1.2)),
-	6: ((2700.0, 4.0, 1.0), (4800.0, 6.0, 1.2)),
-	7: ((2400.0, 5.0, 1.0), (4600.0, 5.0, 1.2)),
-	8: ((3430.0, 8.0, 0.406),),
-	9: ((3430.0, 8.0, 0.406),),
-	10: ((3430.0, 8.0, 0.406),),
-	11: ((3430.0, 8.0, 0.406),),
-	12: ((3430.0, 6.0, 0.406),),
-	13: ((3430.0, 8.0, 0.406),),
-	14: ((3430.0, 8.0, 0.406),),
-	15: ((3430.0, 8.0, 0.406),),
-	16: ((3430.0, 8.0, 0.406),),
-	17: ((3430.0, 8.0, 0.406),),
+	3: ((3430.0, 8.0, 0.406),),
+	18: ((3430.0, 8.0, 0.406),),
+	19: ((3430.0, 8.0, 0.406),),
 }
-_VOICED_ONLY_SHELF_MODES = frozenset((15, 16))
 _current_sample_rate_mode = 1
 _current_variant = 0
 _ECI_SAMPLE_RATE_PARAM = 5
 
 _RATE_MARKER_PATH = os.path.join(os.path.dirname(__file__), "eloquence", "nativeRateMode.txt")
 
+
+def _normalize_rate_mode(mode, default=1):
+	try:
+		mode = int(mode)
+	except (TypeError, ValueError):
+		return default
+	# Modes 4-17 were temporary comparisons removed from the visible list.
+	# Preserve an existing experimental selection by migrating it to the chosen
+	# 4x-B6/measured-balance baseline rather than unexpectedly falling to 11 kHz.
+	if 4 <= mode <= 17:
+		return 3
+	return mode if mode in _ECI_BASE_RATE_MAP else default
+
+
 def _read_persisted_rate_mode(default=1):
 	try:
 		with open(_RATE_MARKER_PATH, "r", encoding="ascii") as f:
-			mode = int(f.read().strip())
-		if mode in _ECI_BASE_RATE_MAP:
-			return mode
+			return _normalize_rate_mode(f.read().strip(), default)
 	except Exception:
 		pass
 	return default
 
+
 def persist_rate_mode(mode):
-	try:
-		mode = int(mode)
-	except (TypeError, ValueError):
-		mode = 1
-	if mode not in _ECI_BASE_RATE_MAP:
-		mode = 1
+	mode = _normalize_rate_mode(mode)
 	try:
 		with open(_RATE_MARKER_PATH, "w", encoding="ascii") as f:
 			f.write(str(mode))
 	except Exception:
 		LOGGER.exception("Could not persist Eloquence sample-rate marker")
 	return mode
+
 
 _ENGINE_VARIANTS = ("chs", "DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "jpn", "kor", "PTB")
 
@@ -166,27 +151,12 @@ def _p16_matches(path, patch_path, enabled):
 def _prepare_syn_engines(mode):
 	"""Switch active SYN files between pristine 8/11 and compact native-16 variants."""
 	base = os.path.join(os.path.dirname(__file__), "eloquence")
-	try:
-		mode = int(mode)
-	except (TypeError, ValueError):
-		mode = 1
+	mode = _normalize_rate_mode(mode)
 	target_ext = {
 		2: ".p16",
-		3: ".p16n",
-		4: ".p16n",
-		5: ".p16n",
-		6: ".p16n",
-		7: ".p16n",
-		8: ".p16n",
-		9: ".p16b5",
-		10: ".p16b15",
-		11: ".p16b20",
-		12: ".p16b20",
-		13: ".p16b30",
-		14: ".p16b40",
-		15: ".p16b30",
-		16: ".p16b40",
-		17: ".p16c6",
+		3: ".p16b40",
+		18: ".p16fs",
+		19: ".p16fu",
 	}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
@@ -199,6 +169,8 @@ def _prepare_syn_engines(mode):
 			# Check derived variants before their base patches: a derived patch
 			# contains every run from .p16n and would otherwise be mistaken for it.
 			for ext in (
+				".p16fu",
+				".p16fs",
 				".p16c6",
 				".p16b40",
 				".p16b30",
@@ -221,22 +193,10 @@ def _prepare_syn_engines(mode):
 		except Exception:
 			LOGGER.exception("Could not switch %s SYN engine", stem)
 	labels = {
-		2: "native 16 kHz",
-		3: "native 16 kHz with true native sibilance",
-		4: "native 16 kHz with native sibilance and late extension boost",
-		5: "native 16 kHz with native sibilance and gentle extension rise",
-		6: "native 16 kHz with native sibilance and medium extension rise",
-		7: "native 16 kHz with native sibilance and early extension rise",
-		8: "native 16 kHz with native sibilance and measured voiced-energy balance",
-		9: "native 16 kHz with measured voiced-energy balance and five cascades",
-		10: "native 16 kHz with measured balance and 1.5x B6 bandwidth",
-		11: "native 16 kHz with measured balance and 2x B6 bandwidth",
-		12: "native 16 kHz with 2x B6 bandwidth and reduced consonant shelf",
-		13: "native 16 kHz with measured balance and 3x B6 bandwidth",
-		14: "native 16 kHz with measured balance and 4x B6 bandwidth",
-		15: "native 16 kHz with 3x B6 bandwidth and voiced-only shelf",
-		16: "native 16 kHz with 4x B6 bandwidth and voiced-only shelf",
-		17: "native 16 kHz with five voiced cascades and six parallel consonant filters",
+		2: "established v20 native 16 kHz reference",
+		3: "native 16 kHz baseline with native s, measured balance, and 4x B6",
+		18: "native 16 kHz baseline with adaptive frication smoothing",
+		19: "native 16 kHz baseline with former upsampler treatment on frication",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
@@ -248,12 +208,7 @@ def get_sample_rate() -> int:
 def set_sample_rate(mode) -> None:
 	"""Select 8, 11.025, or one of the native 16 kHz comparison modes."""
 	global _current_sample_rate_mode, _current_variant
-	try:
-		mode = int(mode)
-	except (TypeError, ValueError):
-		mode = 1
-	if mode not in _ECI_BASE_RATE_MAP:
-		mode = 1
+	mode = _normalize_rate_mode(mode)
 	_current_sample_rate_mode = mode
 	eci_value = 0 if mode == 0 else (2 if mode >= 2 else 1)
 	LOGGER.info("Setting Eloquence sample-rate mode %d (ECI parameter 5 = %d)", mode, eci_value)
@@ -282,8 +237,11 @@ class AudioWorker(threading.Thread):
 		self._stopping = False
 		self._player_lock = threading.RLock()
 		curve = _BANDWIDTH_SHELVES.get(get_sample_rate())
-		filter_class = VoicedHighShelfFilter if get_sample_rate() in _VOICED_ONLY_SHELF_MODES else CascadedHighShelfFilter
-		self._bandwidth_filter = filter_class(_ECI_BASE_RATE_MAP[get_sample_rate()], curve) if curve is not None else None
+		self._bandwidth_filter = (
+			CascadedHighShelfFilter(_ECI_BASE_RATE_MAP[get_sample_rate()], curve)
+			if curve is not None
+			else None
+		)
 		self._filter_sequence: Optional[int] = None
 
 	def run(self) -> None:
@@ -911,12 +869,7 @@ def _sync_eci_ini_paths(eloquence_dir):
 
 def initialize(indexCallback=None):
 	global onIndexReached, _current_sample_rate_mode, _current_variant
-	try:
-		config_default = int(config.conf.get("eloquence", {}).get("sampleRate", 1))
-	except (TypeError, ValueError):
-		config_default = 1
-	if config_default not in _ECI_BASE_RATE_MAP:
-		config_default = 1
+	config_default = _normalize_rate_mode(config.conf.get("eloquence", {}).get("sampleRate", 1))
 	configured_mode = _read_persisted_rate_mode(config_default)
 	_current_sample_rate_mode = configured_mode
 	_prepare_syn_engines(configured_mode)
@@ -956,12 +909,7 @@ def restart_for_sample_rate(mode, indexCallback=None, variant=None):
 	The ECI host is fully torn down so the engine reloads the active .SYN files.
 	"""
 	global _current_sample_rate_mode, _current_variant
-	try:
-		mode = int(mode)
-	except (TypeError, ValueError):
-		mode = 1
-	if mode not in _ECI_BASE_RATE_MAP:
-		mode = 1
+	mode = _normalize_rate_mode(mode)
 	persist_rate_mode(mode)
 	# Save the current voice, voice variant (synthesis model), and user voice
 	# parameters before the host goes away.  eciSetParam(9) can reset a copied

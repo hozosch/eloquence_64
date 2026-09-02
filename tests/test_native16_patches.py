@@ -92,6 +92,28 @@ def test_wide_b6_patches_hook_only_the_sixth_bandwidth_load(tmp_path):
 			assert struct.unpack_from("<f", append, code_offset + 4)[0] == multiplier
 
 
+def test_native_frication_patches_use_the_internal_noise_buffer(tmp_path):
+	builder = _load_patch_builder()
+	assert len(builder.FRICATION_FILTER_CODE) == 488
+	for wide_b6 in sorted(PATCH_DIR.glob("*.p16b40")):
+		for suffix, full_treatment in ((".p16fs", False), (".p16fu", True)):
+			generated = tmp_path / wide_b6.with_suffix(suffix).name
+			builder.make_native_frication_patch(wide_b6, generated, full_treatment)
+			committed = wide_b6.with_suffix(suffix)
+			assert generated.read_bytes() == committed.read_bytes()
+
+			original_size, _patched_size, runs = builder._read_runs(committed.read_bytes())
+			count_run = next(run for run in runs if run[1] == b"\x8b\x85\x36\x0a")
+			frication_run = next(run for run in runs if run[1] == builder.FRICATION_BUFFER_LOAD)
+			assert frication_run[0] == count_run[0] + 0x1D90
+			assert frication_run[2][:1] == b"\xe8"
+
+			append = next(new for offset, old, new in runs if offset == original_size and not old)
+			code_offset = append.index(builder.XFLT_ENTRY) + 0x100
+			code = append[code_offset : code_offset + len(builder.FRICATION_FILTER_CODE)]
+			assert code[builder.FRICATION_FILTER_MODE_OFFSET] == int(full_treatment)
+
+
 def test_wide_b6_patches_apply_to_bundled_engines(tmp_path):
 	builder = _load_patch_builder()
 	for syn in sorted(PATCH_DIR.glob("*.syn")):
@@ -119,3 +141,17 @@ def test_six_parallel_formant_patches_apply_to_bundled_engines():
 		for offset, old, new in runs:
 			assert patched[offset : offset + len(old)] == old
 			patched[offset : offset + len(new)] = new
+
+
+def test_native_frication_patches_apply_to_bundled_engines():
+	builder = _load_patch_builder()
+	for syn in sorted(PATCH_DIR.glob("*.syn")):
+		for suffix in (".p16fs", ".p16fu"):
+			patch = syn.with_suffix(suffix)
+			original = bytearray(syn.read_bytes())
+			original_size, patched_size, runs = builder._read_runs(patch.read_bytes())
+			assert len(original) == original_size
+			patched = original + bytearray(patched_size - original_size)
+			for offset, old, new in runs:
+				assert patched[offset : offset + len(old)] == old
+				patched[offset : offset + len(new)] = new

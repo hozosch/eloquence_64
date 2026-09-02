@@ -1012,22 +1012,10 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		rates = {}
 		rates["0"] = StringParameterInfo("0", "8 kHz")
 		rates["1"] = StringParameterInfo("1", "11 kHz")
-		rates["2"] = StringParameterInfo("2", "16 kHz")
-		rates["3"] = StringParameterInfo("3", "16 kHz (true native s test)")
-		rates["4"] = StringParameterInfo("4", "16 kHz (native s, late +10 dB)")
-		rates["5"] = StringParameterInfo("5", "16 kHz (native s, gentle rise)")
-		rates["6"] = StringParameterInfo("6", "16 kHz (native s, medium rise)")
-		rates["7"] = StringParameterInfo("7", "16 kHz (native s, early rise)")
-		rates["8"] = StringParameterInfo("8", "16 kHz (native s, measured voiced balance)")
-		rates["9"] = StringParameterInfo("9", "16 kHz (measured balance, B6 disabled)")
-		rates["10"] = StringParameterInfo("10", "16 kHz (B6 bandwidth 1.5x)")
-		rates["11"] = StringParameterInfo("11", "16 kHz (B6 bandwidth 2x)")
-		rates["12"] = StringParameterInfo("12", "16 kHz (B6 2x, consonants -2 dB)")
-		rates["13"] = StringParameterInfo("13", "16 kHz (B6 bandwidth 3x)")
-		rates["14"] = StringParameterInfo("14", "16 kHz (B6 bandwidth 4x)")
-		rates["15"] = StringParameterInfo("15", "16 kHz (B6 3x, EQ voiced only)")
-		rates["16"] = StringParameterInfo("16", "16 kHz (B6 4x, EQ voiced only)")
-		rates["17"] = StringParameterInfo("17", "16 kHz (5 voice cascades, 6 consonant filters)")
+		rates["2"] = StringParameterInfo("2", "16 kHz (v20 reference)")
+		rates["3"] = StringParameterInfo("3", "16 kHz (4x B6 + balance)")
+		rates["18"] = StringParameterInfo("18", "16 kHz (frication smoothing)")
+		rates["19"] = StringParameterInfo("19", "16 kHz (upsampler frication treatment)")
 		return rates
 
 	def _set_sampleRate(self, val):
