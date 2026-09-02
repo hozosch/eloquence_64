@@ -44,12 +44,14 @@ _ECI_BASE_RATE_MAP = {
 	5: 16000,  # native sibilance plus a gently rising extension curve
 	6: 16000,  # native sibilance plus a medium rising extension curve
 	7: 16000,  # native sibilance plus an early rising extension curve
+	8: 16000,  # native sibilance plus the measured voiced-energy balance
 }
 _BANDWIDTH_SHELVES = {
 	4: ((4800.0, 10.0, 1.4),),
 	5: ((3000.0, 3.0, 1.0), (5000.0, 7.0, 1.2)),
 	6: ((2700.0, 4.0, 1.0), (4800.0, 6.0, 1.2)),
 	7: ((2400.0, 5.0, 1.0), (4600.0, 5.0, 1.2)),
+	8: ((3430.0, 8.0, 0.406),),
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
@@ -149,7 +151,15 @@ def _prepare_syn_engines(mode):
 		mode = int(mode)
 	except (TypeError, ValueError):
 		mode = 1
-	target_ext = {2: ".p16", 3: ".p16n", 4: ".p16n", 5: ".p16n", 6: ".p16n", 7: ".p16n"}.get(mode)
+	target_ext = {
+		2: ".p16",
+		3: ".p16n",
+		4: ".p16n",
+		5: ".p16n",
+		6: ".p16n",
+		7: ".p16n",
+		8: ".p16n",
+	}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
 		dst = next((os.path.join(base, n) for n in candidates if os.path.exists(os.path.join(base, n))), None)
@@ -178,6 +188,7 @@ def _prepare_syn_engines(mode):
 		5: "native 16 kHz with native sibilance and gentle extension rise",
 		6: "native 16 kHz with native sibilance and medium extension rise",
 		7: "native 16 kHz with native sibilance and early extension rise",
+		8: "native 16 kHz with native sibilance and measured voiced-energy balance",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 

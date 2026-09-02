@@ -76,6 +76,17 @@ class HighShelfFilterTests(unittest.TestCase):
 		self.assertGreater(high_ratio, 3.1)
 		self.assertLess(high_ratio, 3.3)
 
+	def test_measured_voiced_balance_matches_reference_curve(self):
+		filt = shaping.CascadedHighShelfFilter(16000, ((3430.0, 8.0, 0.406),))
+		two_khz_ratio = _rms(filt.process(_tone(2000))) / _rms(_tone(2000))
+		filt.reset()
+		four_khz_ratio = _rms(filt.process(_tone(4000))) / _rms(_tone(4000))
+		filt.reset()
+		seven_khz_ratio = _rms(filt.process(_tone(7000))) / _rms(_tone(7000))
+		self.assertAlmostEqual(20.0 * math.log10(two_khz_ratio), 2.1, delta=0.15)
+		self.assertAlmostEqual(20.0 * math.log10(four_khz_ratio), 4.7, delta=0.15)
+		self.assertAlmostEqual(20.0 * math.log10(seven_khz_ratio), 7.7, delta=0.15)
+
 
 if __name__ == "__main__":
 	unittest.main()
