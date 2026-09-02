@@ -43,15 +43,25 @@ def make_five_cascade_patch(source: Path, destination: Path) -> None:
 		raise ValueError(f"Not a P16 patch: {source}")
 
 	position = 16
-	_offset, old_length, new_length = struct.unpack_from("<III", data, position)
-	position += 12
-	old = bytes(data[position : position + old_length])
-	new_position = position + old_length
-	new = bytes(data[new_position : new_position + new_length])
-	if old != b"\x05" or new != b"\x06":
-		raise ValueError(f"Unexpected cascade-count patch in {source}")
+	count = struct.unpack_from("<I", data, 12)[0]
+	matches = []
+	for _ in range(count):
+		_offset, old_length, new_length = struct.unpack_from("<III", data, position)
+		position += 12
+		old = bytes(data[position : position + old_length])
+		position += old_length
+		new_position = position
+		new = bytes(data[position : position + new_length])
+		position += new_length
+		if old == b"\x8b\x85\x36\x0a" and new == b"\xb8\x06\x00\x00":
+			matches.append(new_position)
+	if len(matches) != 1:
+		raise ValueError(f"Could not uniquely locate cascade-count instruction in {source}")
 
-	data[new_position] = 5
+	# Keep the first header patch (five PE sections -> six): the appended .xflt
+	# section must remain mapped.  Only change the synthesis loop bound from six
+	# cascade formants to five.
+	data[matches[0] + 1] = 5
 	destination.write_bytes(data)
 
 

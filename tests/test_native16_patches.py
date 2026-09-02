@@ -51,3 +51,8 @@ def test_five_cascade_patches_only_restore_the_original_cascade_count(tmp_path):
 		assert len(differences) == 1
 		assert six_cascades[differences[0]] == 6
 		assert five_cascades[differences[0]] == 5
+		# The first run expands the PE section count from five to six. It must be
+		# unchanged so the injected .xflt code remains mapped and executable.
+		assert six_cascades[29] == 6
+		assert five_cascades[29] == 6
+		assert differences[0] != 29
