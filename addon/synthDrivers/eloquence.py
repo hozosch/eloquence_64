@@ -1023,6 +1023,10 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		rates["10"] = StringParameterInfo("10", "16 kHz (B6 bandwidth 1.5x)")
 		rates["11"] = StringParameterInfo("11", "16 kHz (B6 bandwidth 2x)")
 		rates["12"] = StringParameterInfo("12", "16 kHz (B6 2x, consonants -2 dB)")
+		rates["13"] = StringParameterInfo("13", "16 kHz (B6 bandwidth 3x)")
+		rates["14"] = StringParameterInfo("14", "16 kHz (B6 bandwidth 4x)")
+		rates["15"] = StringParameterInfo("15", "16 kHz (B6 3x, EQ voiced only)")
+		rates["16"] = StringParameterInfo("16", "16 kHz (B6 4x, EQ voiced only)")
 		return rates
 
 	def _set_sampleRate(self, val):

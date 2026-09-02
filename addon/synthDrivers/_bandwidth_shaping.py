@@ -66,3 +66,59 @@ class CascadedHighShelfFilter:
 		for stage in self._stages:
 			data = stage.process(data)
 		return data
+
+
+class VoicedHighShelfFilter:
+	"""Blend a shelf in only while the signal has voiced, low-band energy."""
+
+	def __init__(
+		self,
+		sample_rate: int,
+		stages: Sequence[Tuple[float, float, float]],
+		lowpass_frequency: float = 1400.0,
+	) -> None:
+		self._wet = CascadedHighShelfFilter(sample_rate, stages)
+		self._lowpass_coefficient = 1.0 - math.exp(-2.0 * math.pi * lowpass_frequency / sample_rate)
+		self._energy_coefficient = 1.0 - math.exp(-1.0 / (sample_rate * 0.0025))
+		self._attack_coefficient = 1.0 - math.exp(-1.0 / (sample_rate * 0.010))
+		self._release_coefficient = 1.0 - math.exp(-1.0 / (sample_rate * 0.003))
+		self.reset()
+
+	def reset(self) -> None:
+		self._wet.reset()
+		self._lowpass = 0.0
+		self._low_energy = 0.0
+		self._total_energy = 0.0
+		self._mix = 0.0
+
+	def process(self, data: bytes) -> bytes:
+		if not data or len(data) % 2:
+			return data
+		dry = array.array("h")
+		dry.frombytes(data)
+		wet = array.array("h")
+		wet.frombytes(self._wet.process(data))
+		lowpass = self._lowpass
+		low_energy = self._low_energy
+		total_energy = self._total_energy
+		mix = self._mix
+		for i, sample in enumerate(dry):
+			lowpass += self._lowpass_coefficient * (sample - lowpass)
+			low_energy += self._energy_coefficient * (lowpass * lowpass - low_energy)
+			total_energy += self._energy_coefficient * (sample * sample - total_energy)
+			if total_energy < 256.0:
+				target = 0.0
+			else:
+				ratio = low_energy / total_energy
+				target = max(0.0, min(1.0, (ratio - 0.38) / 0.30))
+				# A smoothstep avoids a hard tonal/noise boundary.
+				target = target * target * (3.0 - 2.0 * target)
+			coefficient = self._attack_coefficient if target > mix else self._release_coefficient
+			mix += coefficient * (target - mix)
+			value = sample + mix * (wet[i] - sample)
+			dry[i] = max(-32768, min(32767, round(value)))
+		self._lowpass = lowpass
+		self._low_energy = low_energy
+		self._total_energy = total_energy
+		self._mix = mix
+		return dry.tobytes()

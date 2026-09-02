@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 from . import _eloquence_ipc as _ipc
 from . import _eloquence_job as _job
-from ._bandwidth_shaping import CascadedHighShelfFilter
+from ._bandwidth_shaping import CascadedHighShelfFilter, VoicedHighShelfFilter
 
 import config
 import nvwave
@@ -49,6 +49,10 @@ _ECI_BASE_RATE_MAP = {
 	10: 16000,  # measured balance with B6 bandwidth multiplied by 1.5
 	11: 16000,  # measured balance with B6 bandwidth multiplied by 2.0
 	12: 16000,  # widened B6 plus a reduced global shelf for consonant balance
+	13: 16000,  # measured balance with B6 bandwidth multiplied by 3.0
+	14: 16000,  # measured balance with B6 bandwidth multiplied by 4.0
+	15: 16000,  # 3x B6 with the measured shelf restricted to voiced audio
+	16: 16000,  # 4x B6 with the measured shelf restricted to voiced audio
 }
 _BANDWIDTH_SHELVES = {
 	4: ((4800.0, 10.0, 1.4),),
@@ -60,7 +64,12 @@ _BANDWIDTH_SHELVES = {
 	10: ((3430.0, 8.0, 0.406),),
 	11: ((3430.0, 8.0, 0.406),),
 	12: ((3430.0, 6.0, 0.406),),
+	13: ((3430.0, 8.0, 0.406),),
+	14: ((3430.0, 8.0, 0.406),),
+	15: ((3430.0, 8.0, 0.406),),
+	16: ((3430.0, 8.0, 0.406),),
 }
+_VOICED_ONLY_SHELF_MODES = frozenset((15, 16))
 _current_sample_rate_mode = 1
 _current_variant = 0
 _ECI_SAMPLE_RATE_PARAM = 5
@@ -171,6 +180,10 @@ def _prepare_syn_engines(mode):
 		10: ".p16b15",
 		11: ".p16b20",
 		12: ".p16b20",
+		13: ".p16b30",
+		14: ".p16b40",
+		15: ".p16b30",
+		16: ".p16b40",
 	}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
@@ -180,7 +193,7 @@ def _prepare_syn_engines(mode):
 			continue
 		patches = [
 			os.path.join(base, stem + ext)
-			for ext in (".p16", ".p16n", ".p16b5", ".p16b15", ".p16b20")
+			for ext in (".p16", ".p16n", ".p16b5", ".p16b15", ".p16b20", ".p16b30", ".p16b40")
 			if os.path.exists(os.path.join(base, stem + ext))
 		]
 		try:
@@ -205,6 +218,10 @@ def _prepare_syn_engines(mode):
 		10: "native 16 kHz with measured balance and 1.5x B6 bandwidth",
 		11: "native 16 kHz with measured balance and 2x B6 bandwidth",
 		12: "native 16 kHz with 2x B6 bandwidth and reduced consonant shelf",
+		13: "native 16 kHz with measured balance and 3x B6 bandwidth",
+		14: "native 16 kHz with measured balance and 4x B6 bandwidth",
+		15: "native 16 kHz with 3x B6 bandwidth and voiced-only shelf",
+		16: "native 16 kHz with 4x B6 bandwidth and voiced-only shelf",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
@@ -250,11 +267,8 @@ class AudioWorker(threading.Thread):
 		self._stopping = False
 		self._player_lock = threading.RLock()
 		curve = _BANDWIDTH_SHELVES.get(get_sample_rate())
-		self._bandwidth_filter = (
-			CascadedHighShelfFilter(_ECI_BASE_RATE_MAP[get_sample_rate()], curve)
-			if curve is not None
-			else None
-		)
+		filter_class = VoicedHighShelfFilter if get_sample_rate() in _VOICED_ONLY_SHELF_MODES else CascadedHighShelfFilter
+		self._bandwidth_filter = filter_class(_ECI_BASE_RATE_MAP[get_sample_rate()], curve) if curve is not None else None
 		self._filter_sequence: Optional[int] = None
 
 	def run(self) -> None:

@@ -1,5 +1,6 @@
 import importlib.util
 import math
+import random
 from array import array
 from pathlib import Path
 import unittest
@@ -22,6 +23,27 @@ def _rms(data):
 	samples = array("h")
 	samples.frombytes(data)
 	return math.sqrt(sum(sample * sample for sample in samples) / len(samples))
+
+
+def _mixed_tone(length=16000):
+	return array(
+		"h",
+		(
+			round(
+				2000 * math.sin(2.0 * math.pi * 200 * n / 16000)
+				+ 500 * math.sin(2.0 * math.pi * 7000 * n / 16000)
+			)
+			for n in range(length)
+		),
+	).tobytes()
+
+
+def _tone_amplitude(data, frequency, sample_rate=16000):
+	samples = array("h")
+	samples.frombytes(data)
+	sine = sum(sample * math.sin(2.0 * math.pi * frequency * n / sample_rate) for n, sample in enumerate(samples))
+	cosine = sum(sample * math.cos(2.0 * math.pi * frequency * n / sample_rate) for n, sample in enumerate(samples))
+	return 2.0 * math.hypot(sine, cosine) / len(samples)
 
 
 class HighShelfFilterTests(unittest.TestCase):
@@ -86,6 +108,33 @@ class HighShelfFilterTests(unittest.TestCase):
 		self.assertAlmostEqual(20.0 * math.log10(two_khz_ratio), 2.1, delta=0.15)
 		self.assertAlmostEqual(20.0 * math.log10(four_khz_ratio), 4.7, delta=0.15)
 		self.assertAlmostEqual(20.0 * math.log10(seven_khz_ratio), 7.7, delta=0.15)
+
+	def test_voiced_only_shelf_leaves_unvoiced_highband_native(self):
+		data = _tone(7000)
+		result = shaping.VoicedHighShelfFilter(16000, ((3430.0, 8.0, 0.406),)).process(data)
+		half = len(data) // 2
+		self.assertAlmostEqual(_rms(result[half:]) / _rms(data[half:]), 1.0, delta=0.01)
+
+	def test_voiced_only_shelf_leaves_broadband_noise_native(self):
+		rng = random.Random(1)
+		data = array("h", (rng.randrange(-2000, 2001) for _ in range(16000))).tobytes()
+		result = shaping.VoicedHighShelfFilter(16000, ((3430.0, 8.0, 0.406),)).process(data)
+		half = len(data) // 2
+		self.assertAlmostEqual(_rms(result[half:]) / _rms(data[half:]), 1.0, delta=0.01)
+
+	def test_voiced_only_shelf_boosts_tonal_audio(self):
+		data = _mixed_tone()
+		result = shaping.VoicedHighShelfFilter(16000, ((3430.0, 8.0, 0.406),)).process(data)
+		half = len(data) // 2
+		self.assertGreater(_tone_amplitude(result[half:], 7000), _tone_amplitude(data[half:], 7000) * 2.3)
+		self.assertAlmostEqual(_tone_amplitude(result[half:], 200), _tone_amplitude(data[half:], 200), delta=15.0)
+
+	def test_voiced_only_shelf_preserves_state_across_chunks(self):
+		data = _mixed_tone(length=4000) + _tone(7000, length=4000)
+		whole = shaping.VoicedHighShelfFilter(16000, ((3430.0, 8.0, 0.406),)).process(data)
+		chunked_filter = shaping.VoicedHighShelfFilter(16000, ((3430.0, 8.0, 0.406),))
+		chunked = chunked_filter.process(data[:5000]) + chunked_filter.process(data[5000:])
+		self.assertEqual(whole, chunked)
 
 
 if __name__ == "__main__":

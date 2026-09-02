@@ -157,6 +157,8 @@ def main() -> None:
 		make_five_cascade_patch(native_s, source.with_suffix(".p16b5"))
 		make_b6_bandwidth_patch(native_s, source.with_suffix(".p16b15"), 1.5)
 		make_b6_bandwidth_patch(native_s, source.with_suffix(".p16b20"), 2.0)
+		make_b6_bandwidth_patch(native_s, source.with_suffix(".p16b30"), 3.0)
+		make_b6_bandwidth_patch(native_s, source.with_suffix(".p16b40"), 4.0)
 
 
 if __name__ == "__main__":

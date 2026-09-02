@@ -61,7 +61,7 @@ def test_five_cascade_patches_only_restore_the_original_cascade_count(tmp_path):
 def test_wide_b6_patches_hook_only_the_sixth_bandwidth_load(tmp_path):
 	builder = _load_patch_builder()
 	for native_s in sorted(PATCH_DIR.glob("*.p16n")):
-		for suffix, multiplier in ((".p16b15", 1.5), (".p16b20", 2.0)):
+		for suffix, multiplier in ((".p16b15", 1.5), (".p16b20", 2.0), (".p16b30", 3.0), (".p16b40", 4.0)):
 			generated = tmp_path / native_s.with_suffix(suffix).name
 			builder.make_b6_bandwidth_patch(native_s, generated, multiplier)
 			committed = native_s.with_suffix(suffix)
@@ -79,13 +79,14 @@ def test_wide_b6_patches_hook_only_the_sixth_bandwidth_load(tmp_path):
 def test_wide_b6_patches_apply_to_bundled_engines(tmp_path):
 	builder = _load_patch_builder()
 	for syn in sorted(PATCH_DIR.glob("*.syn")):
-		patch = syn.with_suffix(".p16b20")
-		original = bytearray(syn.read_bytes())
-		original_size, patched_size, runs = builder._read_runs(patch.read_bytes())
-		assert len(original) == original_size
-		patched = original + bytearray(patched_size - original_size)
-		for offset, old, new in runs:
-			assert patched[offset : offset + len(old)] == old
-			patched[offset : offset + len(new)] = new
-		hook = next(new for _offset, old, new in runs if old == builder.B6_LOAD)
-		assert hook[:1] == b"\xe8"
+		for suffix in (".p16b15", ".p16b20", ".p16b30", ".p16b40"):
+			patch = syn.with_suffix(suffix)
+			original = bytearray(syn.read_bytes())
+			original_size, patched_size, runs = builder._read_runs(patch.read_bytes())
+			assert len(original) == original_size
+			patched = original + bytearray(patched_size - original_size)
+			for offset, old, new in runs:
+				assert patched[offset : offset + len(old)] == old
+				patched[offset : offset + len(new)] = new
+			hook = next(new for _offset, old, new in runs if old == builder.B6_LOAD)
+			assert hook[:1] == b"\xe8"
