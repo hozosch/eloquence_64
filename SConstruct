@@ -36,7 +36,11 @@ host_exe = addonDir / "synthDrivers" / "eloquence_host32.exe"
 voice_names = ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB")
 patch_names = ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB", "chs", "jpn", "kor")
 required_proprietary = [eci_dir / "ECI.DLL"] + [eci_dir / f"{name}.SYN" for name in voice_names]
-required_patches = [eci_dir / f"{name}{extension}" for name in patch_names for extension in (".p16", ".p16n")]
+required_patches = [
+	eci_dir / f"{name}{extension}"
+	for name in patch_names
+	for extension in (".p16", ".p16n", ".p16b5")
+]
 
 missing = [str(p) for p in required_proprietary if not p.exists()]
 if missing:

@@ -1019,6 +1019,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		rates["6"] = StringParameterInfo("6", "16 kHz (native s, medium rise)")
 		rates["7"] = StringParameterInfo("7", "16 kHz (native s, early rise)")
 		rates["8"] = StringParameterInfo("8", "16 kHz (native s, measured voiced balance)")
+		rates["9"] = StringParameterInfo("9", "16 kHz (measured balance, B6 disabled)")
 		return rates
 
 	def _set_sampleRate(self, val):

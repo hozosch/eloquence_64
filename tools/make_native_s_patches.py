@@ -36,9 +36,30 @@ def make_native_s_patch(source: Path, destination: Path) -> None:
 	destination.write_bytes(data)
 
 
+def make_five_cascade_patch(source: Path, destination: Path) -> None:
+	"""Derive a native-s patch that leaves the cascade count at five."""
+	data = bytearray(source.read_bytes())
+	if data[:4] != b"P16D":
+		raise ValueError(f"Not a P16 patch: {source}")
+
+	position = 16
+	_offset, old_length, new_length = struct.unpack_from("<III", data, position)
+	position += 12
+	old = bytes(data[position : position + old_length])
+	new_position = position + old_length
+	new = bytes(data[new_position : new_position + new_length])
+	if old != b"\x05" or new != b"\x06":
+		raise ValueError(f"Unexpected cascade-count patch in {source}")
+
+	data[new_position] = 5
+	destination.write_bytes(data)
+
+
 def main() -> None:
 	for source in sorted(PATCH_DIR.glob("*.p16")):
-		make_native_s_patch(source, source.with_suffix(".p16n"))
+		native_s = source.with_suffix(".p16n")
+		make_native_s_patch(source, native_s)
+		make_five_cascade_patch(native_s, source.with_suffix(".p16b5"))
 
 
 if __name__ == "__main__":
