@@ -239,7 +239,7 @@ sibilanceStates:
 	.float 0.0, 0.0
 
 	/* Called from the native-frication wrapper before its original return. At
-	 * this point the cascade/voiced buffer exists at d93, while direct frication
+	 * this point d93 points to the cascade/voiced buffer, while direct frication
 	 * and the parallel consonant buffers have not been added yet. Scaling here
 	 * therefore leaves all unvoiced consonant paths untouched. */
 	.balign 16
@@ -259,7 +259,7 @@ scaleVoicedBuffer:
 	movl 0x14f3(%esi), %ecx
 	testl %ecx, %ecx
 	jle .LvoicedDone
-	leal 0x0d93(%esi), %edi
+	movl 0x0d93(%esi), %edi
 .LvoicedLoop:
 	flds (%edi)
 	fmuls (voicedGain-.LvoicedBase)(%ebp)

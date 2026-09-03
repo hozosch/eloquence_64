@@ -112,8 +112,8 @@ class HighShelfFilterTests(unittest.TestCase):
 	def test_upper_mid_window_adds_body_without_more_high_frequency_gain(self):
 		stages = (
 			(3430.0, 8.0, 0.406),
-			(1800.0, 3.0, 1.0),
-			(6000.0, -3.0, 1.0),
+			(1800.0, 4.0, 1.0),
+			(6000.0, -4.0, 1.0),
 		)
 		filt = shaping.CascadedHighShelfFilter(16000, stages)
 		two_khz_ratio = _rms(filt.process(_tone(2000))) / _rms(_tone(2000))
@@ -121,8 +121,8 @@ class HighShelfFilterTests(unittest.TestCase):
 		four_khz_ratio = _rms(filt.process(_tone(4000))) / _rms(_tone(4000))
 		filt.reset()
 		seven_khz_ratio = _rms(filt.process(_tone(7000))) / _rms(_tone(7000))
-		self.assertAlmostEqual(20.0 * math.log10(two_khz_ratio), 3.9, delta=0.15)
-		self.assertAlmostEqual(20.0 * math.log10(four_khz_ratio), 7.6, delta=0.15)
+		self.assertAlmostEqual(20.0 * math.log10(two_khz_ratio), 4.5, delta=0.15)
+		self.assertAlmostEqual(20.0 * math.log10(four_khz_ratio), 8.5, delta=0.15)
 		self.assertAlmostEqual(20.0 * math.log10(seven_khz_ratio), 7.9, delta=0.15)
 
 	def test_voiced_only_shelf_leaves_unvoiced_highband_native(self):

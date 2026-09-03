@@ -425,9 +425,12 @@ def test_sibilance_rolloff_patches_filter_only_the_hard_routed_high_stages(tmp_p
 	assert bytes.fromhex("83baf800000000") in code
 	assert bytes.fromhex("83f805") in code
 	# The voiced-s boost reads the current outer frame's AV target directly;
-	# the general gain routine processes the main buffer before frication mix-in.
+	# the general gain routine dereferences the main-buffer pointer before the
+	# frication mix-in. Treating d93 as an inline array corrupts engine state.
 	assert bytes.fromhex("8b8a0c010000837904000f95c0") in code
 	assert code[builder.VOICED_BUFFER_PROCESS_OFFSET :].startswith(b"\x60\xe8")
+	assert bytes.fromhex("8bbe930d0000") in code[builder.VOICED_BUFFER_PROCESS_OFFSET :]
+	assert bytes.fromhex("8dbe930d0000") not in code[builder.VOICED_BUFFER_PROCESS_OFFSET :]
 
 
 def test_sibilance_rolloff_code_stays_before_the_mapped_original_mixer():
