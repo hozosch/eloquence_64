@@ -306,9 +306,12 @@ class EloquenceRuntime:
 		short_eloquence_dir = get_short_path(eloquence_dir)
 		updated_content = ini_content.replace("C:\\dummy\\", short_eloquence_dir + "\\")
 
-		# Write the updated content back
-		with open(ini_path, "w", encoding="utf-8") as f:
-			f.write(updated_content)
+		# The controller normally repaired these paths already. Avoid rewriting an
+		# unchanged ECI.INI on every warm reload; besides needless I/O, opening a
+		# DLL-adjacent file for write can trigger real-time scanners on Windows.
+		if updated_content != ini_content:
+			with open(ini_path, "w", encoding="utf-8") as f:
+				f.write(updated_content)
 		self._dll = ctypes.windll.LoadLibrary(self._config.eci_path)
 		self._dll.eciRegisterCallback.argtypes = [c_void_p, Callback, c_void_p]
 		self._dll.eciRegisterCallback.restype = None

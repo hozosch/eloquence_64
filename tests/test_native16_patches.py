@@ -189,7 +189,7 @@ def test_frication_calls_reach_mapped_filter_code_in_every_engine():
 
 def test_split_frication_patches_use_real_direct_and_parallel_branches(tmp_path):
 	builder = _load_patch_builder()
-	assert len(builder.SPLIT_FRICATION_FILTER_CODE) == 528
+	assert len(builder.SPLIT_FRICATION_FILTER_CODE) == 496
 	for wide_b6 in sorted(PATCH_DIR.glob("*.p16b40")):
 		generated = tmp_path / wide_b6.with_suffix(".p16st").name
 		builder.make_targeted_consonant_damping_patch(wide_b6, generated)
@@ -283,38 +283,29 @@ def test_split_frication_patches_use_real_direct_and_parallel_branches(tmp_path)
 			for coefficient in builder.SPLIT_BAND_COEFFICIENTS
 		)
 		assert struct.pack("<f", builder.DIRECT_PATH_GAIN) in builder.SPLIT_FRICATION_FILTER_CODE
-		# The direct path and parallel stages 1--4 share a bounded hard hold.
-		# Stage 5/6 refreshes 48 native samples, bridging momentary holes without
-		# leaking the native route through the rest of an adjacent consonant.
+		# The direct path and parallel stages 1--4 read the exact current target
+		# flags of stages 5/6. They do not use the interpolated stage gains or a
+		# time-based hold that could leak into an adjacent consonant.
 		parallel_entry = builder.PARALLEL_FILTER_PROCESS_OFFSET - builder.SPLIT_FILTER_BLOCK_OFFSET
 		direct_code = builder.SPLIT_FRICATION_FILTER_CODE[:parallel_entry]
 		parallel_code = builder.SPLIT_FRICATION_FILTER_CODE[parallel_entry:]
-		assert bytes.fromhex("b90b000000f3ab") in direct_code
-		direct_native_refresh = direct_code.index(bytes.fromhex("c782e201000030000000"))
-		direct_native_countdown = direct_code.index(
-			bytes.fromhex("8b82e201000085c07415488982e2010000")
-		)
-		direct_stage_5_guard = direct_code.index(bytes.fromhex("8b86ee05000025ffffff7f"))
-		direct_stage_6_guard = direct_code.index(bytes.fromhex("8b863e06000025ffffff7f"))
-		direct_state_clear = direct_code.index(bytes.fromhex("31c08982ba0100008982be010000"))
-		assert direct_stage_5_guard < direct_stage_6_guard < direct_native_countdown
-		assert direct_native_countdown < direct_native_refresh < direct_state_clear
+		assert bytes.fromhex("b90a000000f3ab") in direct_code
+		direct_stage_5_target = direct_code.index(bytes.fromhex("83bc240001000000"))
+		direct_stage_6_target = direct_code.index(bytes.fromhex("83bc240401000000"))
+		direct_state_clear = direct_code.index(bytes.fromhex("31c089829e0100008982a2010000"))
+		assert direct_stage_5_target < direct_stage_6_target < direct_state_clear
 
 		stage_selector = parallel_code.index(
 			bytes.fromhex("89d883e80d83f803")
 		)
-		parallel_native_refresh = parallel_code.index(bytes.fromhex("c7850601000030000000"))
-		parallel_native_hold_guard = parallel_code.index(bytes.fromhex("83bd0601000000757c"))
-		stage_5_guard = parallel_code.index(
-			bytes.fromhex("8b96ee05000081e2ffffff7f")
-		)
-		stage_6_guard = parallel_code.index(
-			bytes.fromhex("8b963e06000081e2ffffff7f")
-		)
-		assert stage_selector < stage_5_guard < stage_6_guard < parallel_native_hold_guard
-		assert parallel_native_hold_guard < parallel_native_refresh
+		saved_outer_stack = parallel_code.index(bytes.fromhex("8b54240c"))
+		stage_5_target = parallel_code.index(bytes.fromhex("83baf400000000"))
+		stage_6_target = parallel_code.index(bytes.fromhex("83baf800000000"))
+		assert stage_selector < saved_outer_stack < stage_5_target < stage_6_target
 		assert bytes.fromhex("83be5318000000") not in builder.SPLIT_FRICATION_FILTER_CODE
-		assert builder.SIBILANCE_STAGE_GAIN_OFFSETS == (0x5EE, 0x63E)
+		assert bytes.fromhex("8b86ee050000") not in builder.SPLIT_FRICATION_FILTER_CODE
+		assert bytes.fromhex("8b863e060000") not in builder.SPLIT_FRICATION_FILTER_CODE
+		assert builder.SIBILANCE_TARGET_STACK_OFFSETS == (0xF0, 0xF4)
 		full_target = full_run[0] + 5 + struct.unpack_from("<i", full_run[2], 1)[0]
 		assert full_target == builder._xflt_runtime_offset(runs, committed) + 0x100
 
@@ -430,6 +421,22 @@ def test_split_frication_patches_apply_with_mapped_targets_to_all_engines():
 			assert actual_target_rva == expected_target_rva, (syn.name, source_offset)
 
 		count_run = next(run for run in runs if run[1] == b"\x8b\x85\x36\x0a")
+		count_offset = count_run[0]
+		# Every language engine computes the current (unsmoothed) stage-5/6
+		# targets into the same two synthesis-frame slots. Later, the stock mixer
+		# reads the matching per-stage slot through EBP before it decays the gain.
+		assert original[count_offset + 0x46C : count_offset + 0x473] == bytes.fromhex(
+			"898424f0000000"
+		), syn.name
+		assert original[count_offset + 0x4EC : count_offset + 0x4F3] == bytes.fromhex(
+			"898424f4000000"
+		), syn.name
+		assert original[count_offset + 0x1DFE : count_offset + 0x1E05] == bytes.fromhex(
+			"8dac24e0000000"
+		), syn.name
+		assert original[count_offset + 0x1E91 : count_offset + 0x1E94] == bytes.fromhex(
+			"db4500"
+		), syn.name
 		parallel_source = count_run[0] + builder.PARALLEL_MIXER_RUN_DELTA
 		parallel_run = next(run for run in runs if run[0] == parallel_source)
 		assert parallel_run[2][:1] == b"\xe8"

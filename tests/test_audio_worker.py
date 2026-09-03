@@ -84,6 +84,17 @@ class WarmEngineReloadTests(unittest.TestCase):
 		client.close_audio.assert_called_once_with()
 		client.send_command.assert_called_once_with("unload")
 
+	def test_unload_engine_can_keep_identical_audio_pipeline(self):
+		module = _load_client_module()
+		client = module.EloquenceHostClient()
+		client._host = types.SimpleNamespace(process=FakeHostProcess())
+		client.close_audio = mock.Mock()
+		client.send_command = mock.Mock(return_value={"status": "ok"})
+
+		self.assertTrue(client.unload_engine(keep_audio=True))
+		client.close_audio.assert_not_called()
+		client.send_command.assert_called_once_with("unload")
+
 	def test_unload_engine_rejects_legacy_host(self):
 		module = _load_client_module()
 		client = module.EloquenceHostClient()

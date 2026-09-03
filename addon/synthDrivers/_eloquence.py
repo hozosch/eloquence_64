@@ -43,7 +43,7 @@ _ECI_BASE_RATE_MAP = {
 	3: 16000,  # selected baseline: native s, measured balance, 4x B6
 	18: 16000,  # baseline plus adaptive smoothing of native frication
 	19: 16000,  # baseline plus the former upsampler treatment on native frication
-	20: 16000,  # Mode 19 plus bounded hard direct/parallel frication routing
+	20: 16000,  # Mode 19 plus target-flag direct/parallel frication routing
 }
 _BANDWIDTH_SHELVES = {
 	3: ((3430.0, 8.0, 0.406),),
@@ -224,7 +224,7 @@ def _prepare_syn_engines(mode):
 		3: "native 16 kHz baseline with native s, measured balance, and 4x B6",
 		18: "native 16 kHz baseline with adaptive frication smoothing",
 		19: "native 16 kHz baseline with former upsampler treatment on frication",
-		20: "native 16 kHz with bounded hard frication paths and native s/t/z",
+		20: "native 16 kHz with target-flag frication paths and native s/t/z",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
@@ -561,15 +561,18 @@ class EloquenceHostClient:
 				LOGGER.exception("WavePlayer close failed")
 			self._player = None
 
-	def unload_engine(self) -> bool:
+	def unload_engine(self, keep_audio: bool = False) -> bool:
 		"""Unload ECI but retain the helper process for a fast SYN variant switch.
 
 		Older bundled helpers do not implement this command. Returning ``False``
 		lets the caller transparently use the proven full-process restart instead.
+		The WavePlayer and its worker can also survive when the old and new modes
+		use an identical output pipeline; this avoids reopening the audio device.
 		"""
 		if not self._host:
 			return False
-		self.close_audio()
+		if not keep_audio:
+			self.close_audio()
 		try:
 			response = self.send_command("unload")
 		except Exception:
@@ -963,6 +966,11 @@ def restart_for_sample_rate(mode, indexCallback=None, variant=None):
 	"""
 	global _current_sample_rate_mode, _current_variant
 	mode = _normalize_rate_mode(mode)
+	old_mode = _current_sample_rate_mode
+	keep_audio = (
+		_ECI_BASE_RATE_MAP.get(old_mode) == _ECI_BASE_RATE_MAP.get(mode)
+		and _BANDWIDTH_SHELVES.get(old_mode) == _BANDWIDTH_SHELVES.get(mode)
+	)
 	persist_rate_mode(mode)
 	# Save the current voice, voice variant (synthesis model), and user voice
 	# parameters before the host goes away.  eciSetParam(9) can reset a copied
@@ -977,7 +985,7 @@ def restart_for_sample_rate(mode, indexCallback=None, variant=None):
 		_client.stop()
 	except Exception:
 		pass
-	warm_reload = _client.unload_engine()
+	warm_reload = _client.unload_engine(keep_audio=keep_audio)
 	if not warm_reload:
 		_client.shutdown()
 	try:

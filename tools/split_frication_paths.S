@@ -17,8 +17,8 @@ resetSplitFrication:
 	pushl %edi
 	leal (stateStart-resetSplitFrication+0x2c)(%eax), %edi
 	movl %edx, %eax
-	/* Direct state, four parallel states, and one shared native hold. */
-	movl $11, %ecx
+	/* Direct state plus four independent parallel-filter states. */
+	movl $10, %ecx
 	rep stosl
 	popl %edi
 	ret
@@ -36,27 +36,16 @@ filterDirectFrication:
 .LdirectBase:
 	popl %edx
 
-	/* This is a categorical split, not a gain fade. Dedicated s/t/z activity
-	 * refreshes a short native hold so a stage-level hole cannot expose the
-	 * filtered path inside that consonant. Unlike the former event-long latch,
-	 * the hold expires after 48 direct samples (3 ms at 16 kHz), allowing an
-	 * immediately following f/ch/p/b consonant to enter the filtered path. */
-	movl 0x5ee(%esi), %eax
-	andl $0x7fffffff, %eax
-	jne .LrefreshDirectST
-	movl 0x63e(%esi), %eax
-	andl $0x7fffffff, %eax
-	jne .LrefreshDirectST
-	movl (nativeHold-.LdirectBase)(%edx), %eax
-	testl %eax, %eax
-	jz .LfilterDirect
-	decl %eax
-	movl %eax, (nativeHold-.LdirectBase)(%edx)
-	jmp .LbypassDirectST
-
-.LrefreshDirectST:
-	movl $48, (nativeHold-.LdirectBase)(%edx)
-	jmp .LbypassDirectST
+	/* Read the engine's current target flags, not its interpolated gains.  The
+	 * outer synthesis frame keeps the six parallel-stage flags at ESP+E0h;
+	 * after the two nested calls and saved EDX, stage 5 and 6 are therefore at
+	 * ESP+100h and ESP+104h here.  A previous s/t/z may leave the corresponding
+	 * gain nonzero while it decays, but its target flag becomes zero immediately.
+	 * This gives the direct f/w/b/p path a hard, stateless consonant boundary. */
+	cmpl $0, 0x100(%esp)
+	jne .LbypassDirectST
+	cmpl $0, 0x104(%esp)
+	jne .LbypassDirectST
 
 .LfilterDirect:
 	subl $8, %esp
@@ -122,20 +111,15 @@ filterParallelFrication:
 	/* Give each of stages 1--4 its own two-word IIR state. */
 	leal (parallelStates-.LparallelBase)(%ebp,%eax,8), %edi
 
-	/* Share the bounded native hold with the sample-rate direct branch. */
-	movl 0x5ee(%esi), %edx
-	andl $0x7fffffff, %edx
-	jne .LrefreshParallelST
-	movl 0x63e(%esi), %edx
-	andl $0x7fffffff, %edx
-	jne .LrefreshParallelST
-	cmpl $0, (nativeHold-.LparallelBase)(%ebp)
+	/* PUSHAL saved the wrapper-entry ESP at +0Ch.  That value is four bytes
+	 * below the outer synthesis frame, whose exact stage-5/6 target flags live
+	 * at +F0h/+F4h.  Test those flags directly (+F4h/+F8h from the saved ESP),
+	 * so a decaying native gain cannot capture a following filtered consonant. */
+	movl 12(%esp), %edx
+	cmpl $0, 0xf4(%edx)
 	jne .LbypassNativeST
-	jmp .LfilterParallel
-
-.LrefreshParallelST:
-	movl $48, (nativeHold-.LparallelBase)(%ebp)
-	jmp .LbypassNativeST
+	cmpl $0, 0xf8(%edx)
+	jne .LbypassNativeST
 
 .LfilterParallel:
 	movl 0x13e3(%esi), %ebx
@@ -219,7 +203,4 @@ parallelStates:
 	.float 0.0, 0.0
 	.float 0.0, 0.0
 	.float 0.0, 0.0
-nativeHold:
-	.long 0
-
 	.section .note.GNU-stack,"",@progbits
