@@ -73,14 +73,20 @@ class FakeHostProcess:
 
 
 class SampleRateModeTests(unittest.TestCase):
-	def test_release_exposes_one_native_16_khz_mode(self):
+	def test_experiment_exposes_four_native_16_khz_modes(self):
 		module = _load_client_module()
-		self.assertEqual(module._ECI_BASE_RATE_MAP, {0: 8000, 1: 11025, 2: 16000})
-		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2})
+		self.assertEqual(
+			module._ECI_BASE_RATE_MAP,
+			{0: 8000, 1: 11025, 2: 16000, 3: 16000, 4: 16000, 5: 16000},
+		)
+		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2, 3, 4, 5})
 
-	def test_experimental_native_modes_migrate_to_final_mode(self):
+	def test_current_experimental_modes_are_preserved_and_retired_modes_migrate(self):
 		module = _load_client_module()
-		for old_mode in range(2, 21):
+		for current_mode in range(2, 6):
+			with self.subTest(current_mode=current_mode):
+				self.assertEqual(module._normalize_rate_mode(current_mode), current_mode)
+		for old_mode in range(6, 21):
 			with self.subTest(old_mode=old_mode):
 				self.assertEqual(module._normalize_rate_mode(old_mode), 2)
 		self.assertEqual(module._normalize_rate_mode(0), 0)
