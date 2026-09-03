@@ -121,15 +121,16 @@ filterParallelFrication:
 	subl $4, %eax
 	leal (sibilanceStates-.LparallelBase)(%ebp,%eax,8), %edi
 
-	/* The outer frame's nonzero F0 target at +4 distinguishes voiced z/s from
-	 * unvoiced s/t. A voiced sibilant bypasses this roll-off completely, so its
-	 * two native v21 stages reach the original mixer bit-for-bit unchanged. */
-	movl 0x10c(%edx), %ecx
-	cmpl $0, 4(%ecx)
+	/* The engine's active-voice (AV) flag is the hard boundary between voiced
+	 * z/s and unvoiced s/t. Unlike the interpolated F0 target, it cannot leak
+	 * from an adjacent vowel into an unvoiced sibilant. A voiced sibilant
+	 * bypasses this roll-off completely, so its two native v21 stages reach the
+	 * original mixer bit-for-bit unchanged. */
+	cmpl $0, 0x1853(%esi)
 	jne .LclearParallelState
 	xorl %eax, %eax
 	/* Keep the coefficient/state layout fixed for the generated P16 patches. */
-	.fill 13, 1, 0x90
+	.fill 16, 1, 0x90
 .LsibilanceCoefficients:
 	leal (sibilanceB0-.LparallelBase)(%ebp), %edx
 	jmp .LfilterParallel
@@ -249,12 +250,12 @@ scaleVoicedBuffer:
 .LvoicedBase:
 	popl %ebp
 
-	/* The hook CALL and PUSHAL put the outer frame pointer at ESP+12ch. A zero
-	 * F0 target at frame+4 means the current frame is unvoiced. Exact s/t/z
-	 * targets skip the gain as well, keeping voiced s fully native. */
-	movl 0x12c(%esp), %edx
-	cmpl $0, 4(%edx)
+	/* Use the same hard active-voice flag as the sibilance split. Exact s/t/z
+	 * targets skip the optional comparison gain as well, keeping voiced s fully
+	 * native. The padding preserves the established routine layout. */
+	cmpl $0, 0x1853(%esi)
 	je .LvoicedDone
+	.fill 4, 1, 0x90
 	cmpl $0, 0x114(%esp)
 	jne .LvoicedDone
 	cmpl $0, 0x118(%esp)

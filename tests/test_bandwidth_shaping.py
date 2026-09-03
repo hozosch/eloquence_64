@@ -79,6 +79,32 @@ class HighShelfFilterTests(unittest.TestCase):
 		with self.assertRaises(ValueError):
 			shaping.HighShelfFilter(16000, 4800, 10.0, slope=0.0)
 
+
+class PeakingEQFilterTests(unittest.TestCase):
+	def test_boost_is_centered_at_four_khz_without_raising_the_top(self):
+		def gain_db(frequency):
+			data = _tone(frequency)
+			result = shaping.PeakingEQFilter(16000, 4000.0, 8.0, 2.0).process(data)
+			return 20.0 * math.log10(_rms(result) / _rms(data))
+
+		self.assertAlmostEqual(gain_db(4000), 8.0, delta=0.15)
+		self.assertAlmostEqual(gain_db(3000), 2.23, delta=0.15)
+		self.assertLess(gain_db(7000), 0.2)
+
+	def test_chunk_boundaries_preserve_filter_state(self):
+		data = _tone(4000, length=4000)
+		whole = shaping.PeakingEQFilter(16000, 4000.0, 8.0, 2.0).process(data)
+		chunked_filter = shaping.PeakingEQFilter(16000, 4000.0, 8.0, 2.0)
+		chunked = chunked_filter.process(data[:3000]) + chunked_filter.process(data[3000:])
+		self.assertEqual(whole, chunked)
+
+	def test_rejects_nonpositive_quality(self):
+		with self.assertRaises(ValueError):
+			shaping.PeakingEQFilter(16000, 4000.0, 8.0, 0.0)
+
+
+class CascadedHighShelfFilterTests(unittest.TestCase):
+
 	def test_cascaded_curve_preserves_state_across_chunks(self):
 		stages = ((2700.0, 4.0, 1.0), (4800.0, 6.0, 1.2))
 		data = _tone(4000, length=4000)

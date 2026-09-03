@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 from . import _eloquence_ipc as _ipc
 from . import _eloquence_job as _job
-from ._bandwidth_shaping import CascadedHighShelfFilter
+from ._bandwidth_shaping import CascadedHighShelfFilter, PeakingEQFilter
 
 import config
 import nvwave
@@ -41,10 +41,10 @@ _ECI_BASE_RATE_MAP = {
 	1: 11025,
 	2: 16000,  # v21 reference
 	3: 16000,  # measured upper-mid correction, native v21 sibilance
-	4: 16000,  # native voiced s, chosen mids and B6 x4.5
-	5: 16000,  # native voiced s with final voiced gain -1 dB
-	21: 16000,  # native voiced s with final voiced gain -2 dB
-	22: 16000,  # native voiced s without the additional upper-mid window
+	4: 16000,  # 4 kHz presence peak and B6 x4.5
+	5: 16000,  # 4 kHz presence peak and B6 x5.0
+	21: 16000,  # 4 kHz presence peak and B6 x6.0
+	22: 16000,  # no post-EQ, B6 x4.5 control
 }
 _V21_BANDWIDTH_SHELF = ((3430.0, 8.0, 0.406),)
 # The equalized recording has a broad, sustained-energy plateau in the upper
@@ -59,10 +59,15 @@ _UPPER_MID_BANDWIDTH_SHELF = _V21_BANDWIDTH_SHELF + (
 _BANDWIDTH_SHELVES = {
 	2: _V21_BANDWIDTH_SHELF,
 	3: _UPPER_MID_BANDWIDTH_SHELF,
-	4: _UPPER_MID_BANDWIDTH_SHELF,
-	5: _UPPER_MID_BANDWIDTH_SHELF,
-	21: _UPPER_MID_BANDWIDTH_SHELF,
-	22: _V21_BANDWIDTH_SHELF,
+}
+# A true peak replaces the broad shelves in the new comparison modes. Q=2
+# confines the +8 dB presence lift around 4 kHz instead of raising the entire
+# sibilance band up to Nyquist.
+_FOUR_KHZ_PRESENCE_PEAK = (4000.0, 8.0, 2.0)
+_BANDWIDTH_PEAKS = {
+	4: _FOUR_KHZ_PRESENCE_PEAK,
+	5: _FOUR_KHZ_PRESENCE_PEAK,
+	21: _FOUR_KHZ_PRESENCE_PEAK,
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
@@ -239,10 +244,10 @@ def _prepare_syn_engines(mode):
 	labels = {
 		2: "v21 native 16 kHz reference",
 		3: "native 16 kHz with measured upper-mid correction",
-		4: "chosen upper mids, native voiced sibilance and B6 x4.5",
-		5: "native voiced sibilance with final voiced gain -1 dB",
-		21: "native voiced sibilance with final voiced gain -2 dB",
-		22: "native voiced sibilance without the additional upper-mid window",
+		4: "4 kHz +8 dB, hard native voiced sibilance split and B6 x4.5",
+		5: "4 kHz +8 dB, hard native voiced sibilance split and B6 x5.0",
+		21: "4 kHz +8 dB, hard native voiced sibilance split and B6 x6.0",
+		22: "no post-EQ, hard native voiced sibilance split and B6 x4.5",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
@@ -282,12 +287,15 @@ class AudioWorker(threading.Thread):
 		self._running = True
 		self._stopping = False
 		self._player_lock = threading.RLock()
-		curve = _BANDWIDTH_SHELVES.get(get_sample_rate())
-		self._bandwidth_filter = (
-			CascadedHighShelfFilter(_ECI_BASE_RATE_MAP[get_sample_rate()], curve)
-			if curve is not None
-			else None
-		)
+		mode = get_sample_rate()
+		curve = _BANDWIDTH_SHELVES.get(mode)
+		peak = _BANDWIDTH_PEAKS.get(mode)
+		if curve is not None:
+			self._bandwidth_filter = CascadedHighShelfFilter(_ECI_BASE_RATE_MAP[mode], curve)
+		elif peak is not None:
+			self._bandwidth_filter = PeakingEQFilter(_ECI_BASE_RATE_MAP[mode], *peak)
+		else:
+			self._bandwidth_filter = None
 		self._filter_sequence: Optional[int] = None
 
 	def run(self) -> None:

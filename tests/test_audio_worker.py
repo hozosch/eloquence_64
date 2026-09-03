@@ -73,7 +73,7 @@ class FakeHostProcess:
 
 
 class SampleRateModeTests(unittest.TestCase):
-	def test_experiment_exposes_upper_mid_and_b6_width_comparisons(self):
+	def test_experiment_exposes_4khz_peak_and_b6_width_comparisons(self):
 		module = _load_client_module()
 		self.assertEqual(
 			module._ECI_BASE_RATE_MAP,
@@ -88,10 +88,14 @@ class SampleRateModeTests(unittest.TestCase):
 				22: 16000,
 			},
 		)
-		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2, 3, 4, 5, 21, 22})
-		self.assertEqual(module._BANDWIDTH_SHELVES[2], module._BANDWIDTH_SHELVES[22])
-		for mode in (3, 4, 5, 21):
-			self.assertEqual(module._BANDWIDTH_SHELVES[mode], module._UPPER_MID_BANDWIDTH_SHELF)
+		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2, 3})
+		self.assertEqual(module._BANDWIDTH_SHELVES[2], module._V21_BANDWIDTH_SHELF)
+		self.assertEqual(module._BANDWIDTH_SHELVES[3], module._UPPER_MID_BANDWIDTH_SHELF)
+		self.assertEqual(set(module._BANDWIDTH_PEAKS), {4, 5, 21})
+		for mode in (4, 5, 21):
+			self.assertEqual(module._BANDWIDTH_PEAKS[mode], module._FOUR_KHZ_PRESENCE_PEAK)
+		self.assertNotIn(22, module._BANDWIDTH_SHELVES)
+		self.assertNotIn(22, module._BANDWIDTH_PEAKS)
 
 	def test_current_comparison_modes_are_preserved_and_retired_modes_migrate(self):
 		module = _load_client_module()
@@ -104,6 +108,16 @@ class SampleRateModeTests(unittest.TestCase):
 		self.assertEqual(module._normalize_rate_mode(0), 0)
 		self.assertEqual(module._normalize_rate_mode(1), 1)
 		self.assertEqual(module._normalize_rate_mode(23), 1)
+
+	def test_new_comparisons_use_peak_while_control_has_no_post_eq(self):
+		module = _load_client_module()
+		module._current_sample_rate_mode = 4
+		peak_worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
+		self.assertIsInstance(peak_worker._bandwidth_filter, module.PeakingEQFilter)
+
+		module._current_sample_rate_mode = 22
+		control_worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
+		self.assertIsNone(control_worker._bandwidth_filter)
 
 
 class WarmEngineReloadTests(unittest.TestCase):
