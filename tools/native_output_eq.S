@@ -14,8 +14,6 @@ resetNativeOutputEq:
 	xorl %eax, %eax
 	movl $6, %ecx
 	rep stosl
-	fld1
-	fstps (smoothedVoicedGain-.LresetBase)(%ebp)
 	popal
 	ret
 
@@ -26,18 +24,6 @@ processNativeOutput:
 .LprocessBase:
 	popl %ebp
 
-	/* The complete voiced signal approaches -1.5 dB. Exact s/t/z targets and
-	 * unvoiced frames approach unity so native s remains untouched. */
-	leal (unityGain-.LprocessBase)(%ebp), %edx
-	cmpl $0, 0x1853(%esi)
-	je .LtargetReady
-	cmpl $0, 0x114(%esp)
-	jne .LtargetReady
-	cmpl $0, 0x118(%esp)
-	jne .LtargetReady
-	leal (voicedGain-.LprocessBase)(%ebp), %edx
-
-.LtargetReady:
 	movl 0x14f3(%esi), %ecx
 	testl %ecx, %ecx
 	jle .Ldone
@@ -45,14 +31,7 @@ processNativeOutput:
 	subl $8, %esp
 
 .LsampleLoop:
-	/* Persistent one-pole gain envelope: g += alpha * (target - g). */
-	flds (%edx)
-	fsubs (smoothedVoicedGain-.LprocessBase)(%ebp)
-	fmuls (voicedGainSmoothing-.LprocessBase)(%ebp)
-	fadds (smoothedVoicedGain-.LprocessBase)(%ebp)
-	fstps (smoothedVoicedGain-.LprocessBase)(%ebp)
 	flds (%edi)
-	fmuls (smoothedVoicedGain-.LprocessBase)(%ebp)
 	fstps 0(%esp)
 
 	/* Run the low shelf and v21 shelf. The presence-enabled native patch raises
@@ -104,17 +83,13 @@ processNativeOutput:
 	movl 0x14f3(%esi), %eax
 	ret
 
+	/* Keep the injected data ABI stable for the patch generator. */
+	.space 0x100 - (. - resetNativeOutputEq), 0x90
 	.balign 4
 filterStageCount:
 	.long 2
-unityGain:
-	.float 1.0
-voicedGain:
-	.float 1.0
-smoothedVoicedGain:
-	.float 1.0
-voicedGainSmoothing:
-	.float 0.04
+	/* Reserved words preserve the native output-EQ data ABI. */
+	.float 1.0, 1.0, 1.0, 0.04
 
 	/* Three identity placeholders replaced by the patch generator. */
 stageCoefficients:

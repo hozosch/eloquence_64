@@ -239,4 +239,33 @@ parallelStates:
 sibilanceStates:
 	.float 0.0, 0.0
 	.float 0.0, 0.0
+
+	/* The cascade/voicing buffer is still separate here; direct and parallel
+	 * frication have not been mixed into it. Apply one fixed path gain on every
+	 * block, with no phoneme detector, gain switching or envelope. */
+	.balign 16
+	.globl scaleVoicedBuffer
+	.type scaleVoicedBuffer,@function
+scaleVoicedBuffer:
+	pushal
+	call .LvoicedBase
+.LvoicedBase:
+	popl %ebp
+	movl 0x14f3(%esi), %ecx
+	testl %ecx, %ecx
+	jle .LvoicedDone
+	movl 0x0d93(%esi), %edi
+.LvoicedLoop:
+	flds (%edi)
+	fmuls (voicedGain-.LvoicedBase)(%ebp)
+	fstps (%edi)
+	addl $4, %edi
+	decl %ecx
+	jne .LvoicedLoop
+
+.LvoicedDone:
+	popal
+	/* Reproduce the instruction replaced in the native-frication wrapper. */
+	movl 0x110(%esp), %edx
+	ret
 	.section .note.GNU-stack,"",@progbits
