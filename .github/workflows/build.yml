@@ -63,6 +63,8 @@ jobs:
 
       - name: Test
         run: uv run --group unit-tests pytest -q
+        env:
+          PYTHONPATH: .
 
       - name: Build addon
         run: scons.bat && scons.bat pot
