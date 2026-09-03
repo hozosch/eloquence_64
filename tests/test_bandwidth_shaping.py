@@ -109,6 +109,19 @@ class HighShelfFilterTests(unittest.TestCase):
 		self.assertAlmostEqual(20.0 * math.log10(four_khz_ratio), 4.7, delta=0.15)
 		self.assertAlmostEqual(20.0 * math.log10(seven_khz_ratio), 7.7, delta=0.15)
 
+	def test_upper_mid_window_adds_body_without_more_high_frequency_gain(self):
+		stages = (
+			(3430.0, 8.0, 0.406),
+			(900.0, 3.0, 1.0),
+			(3800.0, -3.0, 1.0),
+		)
+		filt = shaping.CascadedHighShelfFilter(16000, stages)
+		two_khz_ratio = _rms(filt.process(_tone(2000))) / _rms(_tone(2000))
+		filt.reset()
+		seven_khz_ratio = _rms(filt.process(_tone(7000))) / _rms(_tone(7000))
+		self.assertAlmostEqual(20.0 * math.log10(two_khz_ratio), 4.9, delta=0.15)
+		self.assertAlmostEqual(20.0 * math.log10(seven_khz_ratio), 7.7, delta=0.15)
+
 	def test_voiced_only_shelf_leaves_unvoiced_highband_native(self):
 		data = _tone(7000)
 		result = shaping.VoicedHighShelfFilter(16000, ((3430.0, 8.0, 0.406),)).process(data)

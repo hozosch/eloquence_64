@@ -321,7 +321,7 @@ def test_sibilance_pitch_patches_shift_only_active_parallel_f5_f6(tmp_path):
 		builder.SIBILANCE_PITCH_CODE,
 		builder.SIBILANCE_PITCH_RATIO_OFFSET,
 	)[0] == 1.0
-	variants = ((".p16s1", 1.0), (".p16s2", 2.0), (".p16s3", 3.0))
+	variants = ((".p16s1", 5.0), (".p16s2", 7.0), (".p16s3", 9.0))
 	for reference in sorted(PATCH_DIR.glob("*.p16st")):
 		_original_size, _patched_size, reference_runs = builder._read_runs(reference.read_bytes())
 		for suffix, semitones in variants:

@@ -73,17 +73,29 @@ class FakeHostProcess:
 
 
 class SampleRateModeTests(unittest.TestCase):
-	def test_experiment_exposes_three_sibilance_pitch_comparisons(self):
+	def test_experiment_exposes_upper_mid_and_sibilance_pitch_comparisons(self):
 		module = _load_client_module()
 		self.assertEqual(
 			module._ECI_BASE_RATE_MAP,
-			{0: 8000, 1: 11025, 2: 16000, 3: 16000, 4: 16000, 5: 16000},
+			{
+				0: 8000,
+				1: 11025,
+				2: 16000,
+				3: 16000,
+				4: 16000,
+				5: 16000,
+				21: 16000,
+				22: 16000,
+			},
 		)
-		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2, 3, 4, 5})
+		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2, 3, 4, 5, 21, 22})
+		self.assertEqual(module._BANDWIDTH_SHELVES[2], module._BANDWIDTH_SHELVES[22])
+		for mode in (3, 4, 5, 21):
+			self.assertEqual(module._BANDWIDTH_SHELVES[mode], module._UPPER_MID_BANDWIDTH_SHELF)
 
-	def test_sibilance_pitch_modes_are_preserved_and_retired_modes_migrate(self):
+	def test_current_comparison_modes_are_preserved_and_retired_modes_migrate(self):
 		module = _load_client_module()
-		for current_mode in range(2, 6):
+		for current_mode in (2, 3, 4, 5, 21, 22):
 			with self.subTest(current_mode=current_mode):
 				self.assertEqual(module._normalize_rate_mode(current_mode), current_mode)
 		for old_mode in range(6, 21):
@@ -91,7 +103,7 @@ class SampleRateModeTests(unittest.TestCase):
 				self.assertEqual(module._normalize_rate_mode(old_mode), 2)
 		self.assertEqual(module._normalize_rate_mode(0), 0)
 		self.assertEqual(module._normalize_rate_mode(1), 1)
-		self.assertEqual(module._normalize_rate_mode(21), 1)
+		self.assertEqual(module._normalize_rate_mode(23), 1)
 
 
 class WarmEngineReloadTests(unittest.TestCase):

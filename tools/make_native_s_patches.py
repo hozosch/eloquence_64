@@ -431,7 +431,7 @@ def main() -> None:
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fu"), True)
 		make_targeted_consonant_damping_patch(wide_b6, source.with_suffix(".p16st"))
 		reference = source.with_suffix(".p16st")
-		for suffix, semitones in ((".p16s1", 1.0), (".p16s2", 2.0), (".p16s3", 3.0)):
+		for suffix, semitones in ((".p16s1", 5.0), (".p16s2", 7.0), (".p16s3", 9.0)):
 			make_sibilance_pitch_patch(reference, source.with_suffix(suffix), semitones)
 
 

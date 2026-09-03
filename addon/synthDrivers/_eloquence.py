@@ -40,15 +40,29 @@ _ECI_BASE_RATE_MAP = {
 	0: 8000,
 	1: 11025,
 	2: 16000,  # v21 reference
-	3: 16000,  # native v21 sibilance resonances down one semitone
-	4: 16000,  # native v21 sibilance resonances down two semitones
-	5: 16000,  # native v21 sibilance resonances down three semitones
+	3: 16000,  # measured upper-mid correction, native v21 sibilance
+	4: 16000,  # upper mids, native v21 sibilance resonances down five semitones
+	5: 16000,  # upper mids, native v21 sibilance resonances down seven semitones
+	21: 16000,  # upper mids, native v21 sibilance resonances down nine semitones
+	22: 16000,  # seven-semitone control without the upper-mid correction
 }
+_V21_BANDWIDTH_SHELF = ((3430.0, 8.0, 0.406),)
+# The equalized recording has a broad, sustained-energy plateau in the upper
+# mids, but its overall gain and consonant band must not be copied.  Two
+# opposing shelves add about 2.8 dB from 1.5 to 2.5 kHz, then converge back to
+# 0 dB above 6 kHz.  Cascading this static window with the v21 shelf therefore
+# adds body without another time-varying consonant detector or more HF gain.
+_UPPER_MID_BANDWIDTH_SHELF = _V21_BANDWIDTH_SHELF + (
+	(900.0, 3.0, 1.0),
+	(3800.0, -3.0, 1.0),
+)
 _BANDWIDTH_SHELVES = {
-	2: ((3430.0, 8.0, 0.406),),
-	3: ((3430.0, 8.0, 0.406),),
-	4: ((3430.0, 8.0, 0.406),),
-	5: ((3430.0, 8.0, 0.406),),
+	2: _V21_BANDWIDTH_SHELF,
+	3: _UPPER_MID_BANDWIDTH_SHELF,
+	4: _UPPER_MID_BANDWIDTH_SHELF,
+	5: _UPPER_MID_BANDWIDTH_SHELF,
+	21: _UPPER_MID_BANDWIDTH_SHELF,
+	22: _V21_BANDWIDTH_SHELF,
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
@@ -62,8 +76,8 @@ def _normalize_rate_mode(mode, default=1):
 		mode = int(mode)
 	except (TypeError, ValueError):
 		return default
-	# Keep the four current comparison modes. Retired native-16 development
-	# values still migrate to the stable v21 reference.
+	# Keep the current comparison modes. Retired native-16 development values
+	# still migrate to the stable v21 reference.
 	if 6 <= mode <= 20:
 		return 2
 	return mode if mode in _ECI_BASE_RATE_MAP else default
@@ -167,9 +181,11 @@ def _prepare_syn_engines(mode):
 	mode = _normalize_rate_mode(mode)
 	target_ext = {
 		2: ".p16st",
-		3: ".p16s1",
-		4: ".p16s2",
-		5: ".p16s3",
+		3: ".p16st",
+		4: ".p16s1",
+		5: ".p16s2",
+		21: ".p16s3",
+		22: ".p16s2",
 	}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
@@ -221,9 +237,11 @@ def _prepare_syn_engines(mode):
 			LOGGER.exception("Could not switch %s SYN engine", stem)
 	labels = {
 		2: "v21 native 16 kHz reference",
-		3: "native 16 kHz with v21 sibilance resonances down one semitone",
-		4: "native 16 kHz with v21 sibilance resonances down two semitones",
-		5: "native 16 kHz with v21 sibilance resonances down three semitones",
+		3: "native 16 kHz with measured upper-mid correction",
+		4: "upper-mid correction and v21 sibilance resonances down five semitones",
+		5: "upper-mid correction and v21 sibilance resonances down seven semitones",
+		21: "upper-mid correction and v21 sibilance resonances down nine semitones",
+		22: "v21 sibilance resonances down seven semitones without upper-mid correction",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
