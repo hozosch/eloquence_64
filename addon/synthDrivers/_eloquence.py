@@ -41,20 +41,20 @@ _ECI_BASE_RATE_MAP = {
 	1: 11025,
 	2: 16000,  # v21 reference
 	3: 16000,  # measured upper-mid correction, native v21 sibilance
-	4: 16000,  # chosen mids/roll-off/B6 x4.5 baseline
-	5: 16000,  # baseline with voiced -1 dB and voiced s +1 dB
-	21: 16000,  # baseline with voiced -2 dB and voiced s +1 dB
-	22: 16000,  # baseline with voiced -1 dB and voiced s +2 dB
+	4: 16000,  # native voiced s, chosen mids and B6 x4.5
+	5: 16000,  # native voiced s with final voiced gain -1 dB
+	21: 16000,  # native voiced s with final voiced gain -2 dB
+	22: 16000,  # native voiced s without the additional upper-mid window
 }
 _V21_BANDWIDTH_SHELF = ((3430.0, 8.0, 0.406),)
 # The equalized recording has a broad, sustained-energy plateau in the upper
 # mids, but its overall gain and consonant band must not be copied.  Two
-# opposing shelves add about 3.7 dB from 3 to 5 kHz, then converge back to
+# opposing shelves add about 2.8 dB from 3 to 5 kHz, then converge back to
 # 0 dB at the 8 kHz edge. Cascading this static window with the v21 shelf
 # therefore adds presence without another time-varying consonant detector.
 _UPPER_MID_BANDWIDTH_SHELF = _V21_BANDWIDTH_SHELF + (
-	(1800.0, 4.0, 1.0),
-	(6000.0, -4.0, 1.0),
+	(1800.0, 3.0, 1.0),
+	(6000.0, -3.0, 1.0),
 )
 _BANDWIDTH_SHELVES = {
 	2: _V21_BANDWIDTH_SHELF,
@@ -62,7 +62,7 @@ _BANDWIDTH_SHELVES = {
 	4: _UPPER_MID_BANDWIDTH_SHELF,
 	5: _UPPER_MID_BANDWIDTH_SHELF,
 	21: _UPPER_MID_BANDWIDTH_SHELF,
-	22: _UPPER_MID_BANDWIDTH_SHELF,
+	22: _V21_BANDWIDTH_SHELF,
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
@@ -239,10 +239,10 @@ def _prepare_syn_engines(mode):
 	labels = {
 		2: "v21 native 16 kHz reference",
 		3: "native 16 kHz with measured upper-mid correction",
-		4: "chosen upper mids, mild sibilance roll-off and B6 x4.5 baseline",
-		5: "baseline with voiced gain -1 dB and voiced sibilance +1 dB",
-		21: "baseline with voiced gain -2 dB and voiced sibilance +1 dB",
-		22: "baseline with voiced gain -1 dB and voiced sibilance +2 dB",
+		4: "chosen upper mids, native voiced sibilance and B6 x4.5",
+		5: "native voiced sibilance with final voiced gain -1 dB",
+		21: "native voiced sibilance with final voiced gain -2 dB",
+		22: "native voiced sibilance without the additional upper-mid window",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 

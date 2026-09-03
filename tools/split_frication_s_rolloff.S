@@ -121,16 +121,15 @@ filterParallelFrication:
 	subl $4, %eax
 	leal (sibilanceStates-.LparallelBase)(%ebp,%eax,8), %edi
 
-	/* A unity placeholder keeps the established baseline bit-identical. For a
-	 * comparison boost, the outer frame's current AV value at +4 distinguishes
-	 * voiced z/s from unvoiced s/t without carrying detector state across the
-	 * hard consonant boundary. */
-	xorl %eax, %eax
-	cmpl $0x3f800000, (voicedSBoost-.LparallelBase)(%ebp)
-	je .LsibilanceCoefficients
+	/* The outer frame's nonzero F0 target at +4 distinguishes voiced z/s from
+	 * unvoiced s/t. A voiced sibilant bypasses this roll-off completely, so its
+	 * two native v21 stages reach the original mixer bit-for-bit unchanged. */
 	movl 0x10c(%edx), %ecx
 	cmpl $0, 4(%ecx)
-	setne %al
+	jne .LclearParallelState
+	xorl %eax, %eax
+	/* Keep the coefficient/state layout fixed for the generated P16 patches. */
+	.fill 13, 1, 0x90
 .LsibilanceCoefficients:
 	leal (sibilanceB0-.LparallelBase)(%ebp), %edx
 	jmp .LfilterParallel
@@ -177,9 +176,8 @@ filterParallelFrication:
 	fstps 4(%edi)
 
 	flds 4(%esp)
-	testl %eax, %eax
-	je .LstoreParallel
-	fmuls (voicedSBoost-.LparallelBase)(%ebp)
+	/* Reserved bytes keep all coefficient and state offsets stable. */
+	.fill 10, 1, 0x90
 .LstoreParallel:
 	fstps (%ebx)
 	addl $4, %ebx
@@ -216,7 +214,8 @@ sibilanceA1:
 sibilanceA2:
 	.float 0.0
 
-voicedSBoost:
+	/* Retained only to preserve the established binary data layout. */
+reservedVoicedSLevel:
 	.float 1.0
 voicedGain:
 	.float 1.0
@@ -238,10 +237,9 @@ sibilanceStates:
 	.float 0.0, 0.0
 	.float 0.0, 0.0
 
-	/* Called from the native-frication wrapper before its original return. At
-	 * this point d93 points to the cascade/voiced buffer, while direct frication
-	 * and the parallel consonant buffers have not been added yet. Scaling here
-	 * therefore leaves all unvoiced consonant paths untouched. */
+	/* Called after the engine has mixed its cascade, direct-frication and
+	 * parallel paths into the final float buffer at d93. Scaling at this point
+	 * changes the complete voiced frame instead of only its cascade component. */
 	.balign 16
 	.globl scaleVoicedBuffer
 	.type scaleVoicedBuffer,@function
@@ -251,11 +249,16 @@ scaleVoicedBuffer:
 .LvoicedBase:
 	popl %ebp
 
-	/* The nested CALL and PUSHAL put the outer frame pointer at ESP+130h. AV is
-	 * the float at frame+4; an exact zero means the current frame is unvoiced. */
-	movl 0x130(%esp), %edx
+	/* The hook CALL and PUSHAL put the outer frame pointer at ESP+12ch. A zero
+	 * F0 target at frame+4 means the current frame is unvoiced. Exact s/t/z
+	 * targets skip the gain as well, keeping voiced s fully native. */
+	movl 0x12c(%esp), %edx
 	cmpl $0, 4(%edx)
 	je .LvoicedDone
+	cmpl $0, 0x114(%esp)
+	jne .LvoicedDone
+	cmpl $0, 0x118(%esp)
+	jne .LvoicedDone
 	movl 0x14f3(%esi), %ecx
 	testl %ecx, %ecx
 	jle .LvoicedDone
@@ -270,7 +273,7 @@ scaleVoicedBuffer:
 
 .LvoicedDone:
 	popal
-	/* Reproduce the instruction replaced by the outer frication hook. */
-	movl 0x110(%esp), %edx
+	/* Reproduce the final-buffer count load replaced by the outer hook. */
+	movl 0x14f3(%esi), %eax
 	ret
 	.section .note.GNU-stack,"",@progbits

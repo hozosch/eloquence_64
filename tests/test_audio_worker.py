@@ -89,7 +89,8 @@ class SampleRateModeTests(unittest.TestCase):
 			},
 		)
 		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2, 3, 4, 5, 21, 22})
-		for mode in (3, 4, 5, 21, 22):
+		self.assertEqual(module._BANDWIDTH_SHELVES[2], module._BANDWIDTH_SHELVES[22])
+		for mode in (3, 4, 5, 21):
 			self.assertEqual(module._BANDWIDTH_SHELVES[mode], module._UPPER_MID_BANDWIDTH_SHELF)
 
 	def test_current_comparison_modes_are_preserved_and_retired_modes_migrate(self):
