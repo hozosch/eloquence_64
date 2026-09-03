@@ -39,17 +39,10 @@ HOST_EXIT_TIMEOUT = 3.0
 _ECI_BASE_RATE_MAP = {
 	0: 8000,
 	1: 11025,
-	2: 16000,  # established v20 native-16 reference
-	3: 16000,  # selected baseline: native s, measured balance, 4x B6
-	18: 16000,  # baseline plus adaptive smoothing of native frication
-	19: 16000,  # baseline plus the former upsampler treatment on native frication
-	20: 16000,  # Mode 19 plus target-flag direct/parallel frication routing
+	2: 16000,  # final target-flag native-16 tuning
 }
 _BANDWIDTH_SHELVES = {
-	3: ((3430.0, 8.0, 0.406),),
-	18: ((3430.0, 8.0, 0.406),),
-	19: ((3430.0, 8.0, 0.406),),
-	20: ((3430.0, 8.0, 0.406),),
+	2: ((3430.0, 8.0, 0.406),),
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
@@ -63,11 +56,10 @@ def _normalize_rate_mode(mode, default=1):
 		mode = int(mode)
 	except (TypeError, ValueError):
 		return default
-	# Modes 4-17 were temporary comparisons removed from the visible list.
-	# Preserve an existing experimental selection by migrating it to the chosen
-	# 4x-B6/measured-balance baseline rather than unexpectedly falling to 11 kHz.
-	if 4 <= mode <= 17:
-		return 3
+	# Migrate every native-16 comparison value used by development builds to the
+	# single final mode. This also promotes the v20 native-16 setting in place.
+	if 2 <= mode <= 20:
+		return 2
 	return mode if mode in _ECI_BASE_RATE_MAP else default
 
 
@@ -168,11 +160,7 @@ def _prepare_syn_engines(mode):
 	base = os.path.join(os.path.dirname(__file__), "eloquence")
 	mode = _normalize_rate_mode(mode)
 	target_ext = {
-		2: ".p16",
-		3: ".p16b40",
-		18: ".p16fs",
-		19: ".p16fu",
-		20: ".p16st",
+		2: ".p16st",
 	}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
@@ -220,11 +208,7 @@ def _prepare_syn_engines(mode):
 		except Exception:
 			LOGGER.exception("Could not switch %s SYN engine", stem)
 	labels = {
-		2: "established v20 native 16 kHz reference",
-		3: "native 16 kHz baseline with native s, measured balance, and 4x B6",
-		18: "native 16 kHz baseline with adaptive frication smoothing",
-		19: "native 16 kHz baseline with former upsampler treatment on frication",
-		20: "native 16 kHz with target-flag frication paths and native s/t/z",
+		2: "final native 16 kHz with target-flag consonant routing",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
@@ -234,7 +218,7 @@ def get_sample_rate() -> int:
 
 
 def set_sample_rate(mode) -> None:
-	"""Select 8, 11.025, or one of the native 16 kHz comparison modes."""
+	"""Select the original 8/11.025 kHz engine or the final native 16 kHz mode."""
 	global _current_sample_rate_mode, _current_variant
 	mode = _normalize_rate_mode(mode)
 	_current_sample_rate_mode = mode
@@ -561,18 +545,15 @@ class EloquenceHostClient:
 				LOGGER.exception("WavePlayer close failed")
 			self._player = None
 
-	def unload_engine(self, keep_audio: bool = False) -> bool:
+	def unload_engine(self) -> bool:
 		"""Unload ECI but retain the helper process for a fast SYN variant switch.
 
 		Older bundled helpers do not implement this command. Returning ``False``
 		lets the caller transparently use the proven full-process restart instead.
-		The WavePlayer and its worker can also survive when the old and new modes
-		use an identical output pipeline; this avoids reopening the audio device.
 		"""
 		if not self._host:
 			return False
-		if not keep_audio:
-			self.close_audio()
+		self.close_audio()
 		try:
 			response = self.send_command("unload")
 		except Exception:
@@ -966,11 +947,6 @@ def restart_for_sample_rate(mode, indexCallback=None, variant=None):
 	"""
 	global _current_sample_rate_mode, _current_variant
 	mode = _normalize_rate_mode(mode)
-	old_mode = _current_sample_rate_mode
-	keep_audio = (
-		_ECI_BASE_RATE_MAP.get(old_mode) == _ECI_BASE_RATE_MAP.get(mode)
-		and _BANDWIDTH_SHELVES.get(old_mode) == _BANDWIDTH_SHELVES.get(mode)
-	)
 	persist_rate_mode(mode)
 	# Save the current voice, voice variant (synthesis model), and user voice
 	# parameters before the host goes away.  eciSetParam(9) can reset a copied
@@ -985,7 +961,7 @@ def restart_for_sample_rate(mode, indexCallback=None, variant=None):
 		_client.stop()
 	except Exception:
 		pass
-	warm_reload = _client.unload_engine(keep_audio=keep_audio)
+	warm_reload = _client.unload_engine()
 	if not warm_reload:
 		_client.shutdown()
 	try:

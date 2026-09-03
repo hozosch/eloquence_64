@@ -1030,11 +1030,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		rates = {}
 		rates["0"] = StringParameterInfo("0", "8 kHz")
 		rates["1"] = StringParameterInfo("1", "11 kHz")
-		rates["2"] = StringParameterInfo("2", "16 kHz (v20 reference)")
-		rates["3"] = StringParameterInfo("3", "16 kHz (4x B6 + balance)")
-		rates["18"] = StringParameterInfo("18", "16 kHz (frication smoothing)")
-		rates["19"] = StringParameterInfo("19", "16 kHz (upsampler frication treatment)")
-		rates["20"] = StringParameterInfo("20", "16 kHz (target-flag frication paths)")
+		rates["2"] = StringParameterInfo("2", "16 kHz")
 		return rates
 
 	def _set_sampleRate(self, val):
@@ -1042,6 +1038,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 			val = int(val)
 		except (ValueError, TypeError):
 			val = 1
+		val = _eloquence._normalize_rate_mode(val)
 
 		if hasattr(self, "_sample_rate") and self._sample_rate == val:
 			return

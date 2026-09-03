@@ -72,6 +72,22 @@ class FakeHostProcess:
 		return None
 
 
+class SampleRateModeTests(unittest.TestCase):
+	def test_release_exposes_one_native_16_khz_mode(self):
+		module = _load_client_module()
+		self.assertEqual(module._ECI_BASE_RATE_MAP, {0: 8000, 1: 11025, 2: 16000})
+		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2})
+
+	def test_experimental_native_modes_migrate_to_final_mode(self):
+		module = _load_client_module()
+		for old_mode in range(2, 21):
+			with self.subTest(old_mode=old_mode):
+				self.assertEqual(module._normalize_rate_mode(old_mode), 2)
+		self.assertEqual(module._normalize_rate_mode(0), 0)
+		self.assertEqual(module._normalize_rate_mode(1), 1)
+		self.assertEqual(module._normalize_rate_mode(21), 1)
+
+
 class WarmEngineReloadTests(unittest.TestCase):
 	def test_unload_engine_keeps_supported_host(self):
 		module = _load_client_module()
@@ -82,17 +98,6 @@ class WarmEngineReloadTests(unittest.TestCase):
 
 		self.assertTrue(client.unload_engine())
 		client.close_audio.assert_called_once_with()
-		client.send_command.assert_called_once_with("unload")
-
-	def test_unload_engine_can_keep_identical_audio_pipeline(self):
-		module = _load_client_module()
-		client = module.EloquenceHostClient()
-		client._host = types.SimpleNamespace(process=FakeHostProcess())
-		client.close_audio = mock.Mock()
-		client.send_command = mock.Mock(return_value={"status": "ok"})
-
-		self.assertTrue(client.unload_engine(keep_audio=True))
-		client.close_audio.assert_not_called()
 		client.send_command.assert_called_once_with("unload")
 
 	def test_unload_engine_rejects_legacy_host(self):

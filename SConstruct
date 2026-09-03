@@ -42,7 +42,7 @@ required_proprietary = [eci_dir / "ECI.DLL"] + [eci_dir / f"{name}.SYN" for name
 required_patches = [
 	eci_dir / f"{name}{extension}"
 	for name in patch_names
-	for extension in (".p16", ".p16n", ".p16b5", ".p16st")
+	for extension in (".p16st",)
 ]
 
 missing = [str(p) for p in required_proprietary if not p.exists()]

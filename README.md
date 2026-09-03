@@ -17,6 +17,8 @@ launches a compatible 32-bit Python interpreter with `host_eloquence32.py`.
 
 Starting with v20, the add-on provides a native 16 kHz Eloquence mode. It
 replaces the external 11.025→22.05 kHz output upsampler used by earlier releases.
+The release build exposes exactly one 16 kHz setting alongside the original 8
+and 11.025 kHz settings; experimental comparison modes are not user-selectable.
 
 The 8 kHz and 11.025 kHz modes still use the original Eloquence voice data and
 can be switched live through Eloquence's normal sample-rate parameter. The 16
@@ -33,9 +35,11 @@ would require modifying the loaded proprietary synthesis module in process
 memory, whereas restarting the isolated host lets Eloquence load the patched
 module normally and keeps the change reversible.
 
-The final 16 kHz tuning includes a small consonant/noise gain increase, the sixth
-cascade formant, and language-aware tuning of the stage-5/6 sibilance component.
-See [docs/native16.md](docs/native16.md) for details.
+The final 16 kHz tuning preserves the engine's native `s`, voiced `s`, and `t`
+paths. Exact synthesis target flags route the remaining selected consonant paths
+through a separate spectral pivot, so filter state cannot spill from one class
+into the next. See [the native-16 design record](docs/adr/0002native16.md) for
+details.
 
 ## Traditional Chinese Script Conversion
 
