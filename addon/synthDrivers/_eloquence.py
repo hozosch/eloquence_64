@@ -41,10 +41,10 @@ _ECI_BASE_RATE_MAP = {
 	1: 11025,
 	2: 16000,  # v21 reference
 	3: 16000,  # measured upper-mid correction, native v21 sibilance
-	4: 16000,  # upper mids, mild s/t/z roll-off, B6 x4.0
-	5: 16000,  # upper mids, mild s/t/z roll-off, B6 x4.25
-	21: 16000,  # upper mids, mild s/t/z roll-off, B6 x4.5
-	22: 16000,  # mild s/t/z roll-off and B6 x4.25, without upper-mid correction
+	4: 16000,  # chosen mids/roll-off/B6 x4.5 baseline
+	5: 16000,  # baseline with voiced -1 dB and voiced s +1 dB
+	21: 16000,  # baseline with voiced -2 dB and voiced s +1 dB
+	22: 16000,  # baseline with voiced -1 dB and voiced s +2 dB
 }
 _V21_BANDWIDTH_SHELF = ((3430.0, 8.0, 0.406),)
 # The equalized recording has a broad, sustained-energy plateau in the upper
@@ -62,7 +62,7 @@ _BANDWIDTH_SHELVES = {
 	4: _UPPER_MID_BANDWIDTH_SHELF,
 	5: _UPPER_MID_BANDWIDTH_SHELF,
 	21: _UPPER_MID_BANDWIDTH_SHELF,
-	22: _V21_BANDWIDTH_SHELF,
+	22: _UPPER_MID_BANDWIDTH_SHELF,
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
@@ -185,7 +185,7 @@ def _prepare_syn_engines(mode):
 		4: ".p16s1",
 		5: ".p16s2",
 		21: ".p16s3",
-		22: ".p16s2",
+		22: ".p16s4",
 	}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
@@ -198,6 +198,7 @@ def _prepare_syn_engines(mode):
 			# Check derived variants before their base patches: a derived patch
 			# contains every run from .p16n and would otherwise be mistaken for it.
 			for ext in (
+				".p16s4",
 				".p16s3",
 				".p16s2",
 				".p16s1",
@@ -238,10 +239,10 @@ def _prepare_syn_engines(mode):
 	labels = {
 		2: "v21 native 16 kHz reference",
 		3: "native 16 kHz with measured upper-mid correction",
-		4: "upper-mid correction, mild sibilance roll-off and B6 x4.0",
-		5: "upper-mid correction, mild sibilance roll-off and B6 x4.25",
-		21: "upper-mid correction, mild sibilance roll-off and B6 x4.5",
-		22: "mild sibilance roll-off and B6 x4.25 without upper-mid correction",
+		4: "chosen upper mids, mild sibilance roll-off and B6 x4.5 baseline",
+		5: "baseline with voiced gain -1 dB and voiced sibilance +1 dB",
+		21: "baseline with voiced gain -2 dB and voiced sibilance +1 dB",
+		22: "baseline with voiced gain -1 dB and voiced sibilance +2 dB",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 

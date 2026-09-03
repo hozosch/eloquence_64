@@ -49,20 +49,17 @@ SPLIT_FRICATION_FILTER_CODE = bytes.fromhex(
 	"3e18594b3f00000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
 SIBILANCE_ROLLOFF_FILTER_CODE = bytes.fromhex(
-	"89500c895010578db82c02000089d0b90e000000f3ab5fc32e8db42600000000d84c244052e8000000005a83bc240001"
-	"000000757283bc240401000000756883ec08d91c24d982aa010000d80c24d882d6010000d95c2404d982ae010000d80c"
-	"24d982b6010000d84c2404d9e0dec1d882da010000d99ad6010000d982b2010000d80c24d982ba010000d84c2404d9e0"
-	"dec1d99ada010000d9442404d88ad201000083c408eb0e31c08982d60100008982da0100005a83c40458c3eb432e8db4"
-	"26000000002e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db4"
-	"26000000002e8db426000000008d760060e8000000005d89d883e80d83f8050f87b90000008b54240c83baf400000000"
-	"752983baf800000000752083f803770f8dbcc5020100008d95ce000000eb3383e8048dbcc522010000eb1e83f8037612"
-	"83e8048dbcc5220100008d95e2000000eb108dbcc50201000031c9890f894f04eb5c8b9ee31300008b8ef314000085c9"
-	"7e4c83ec08d903d91c24d902d80c24d807d95c2404d94204d80c24d9420cd84c2404d9e0dec1d84704d91fd94208d8"
-	"0c24d94210d84c2404d9e0dec1d95f04d9442404d91b83c3044975ba83c40861e92c010000ad58583f49c80c3fd12256"
-	"3ec26ccabe1a204c3e0000803f0000000000000000000000000000000018594b3f000000000000000000000000000000"
-	"0000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+	"89500c895010578db85c02000089d0b90e000000f3ab5fc32e8db42600000000d84c244052e8000000005a83bc240001000000757283bc240401000000756883ec08d91c24d982d2010000d80c24d88206020000d95c2404d982d6010000d80c24d982de010000d84c2404d9e0dec1d8820a020000d99a06"
+	"020000d982da010000d80c24d982e2010000d84c2404d9e0dec1d99a0a020000d9442404d88a0202000083c408eb0e31c089820602000089820a0200005a83c40458c3eb432e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db4"
+	"26000000002e8db426000000008d760060e8000000005d89d883e80d83f8050f87e00000008b54240c83baf400000000752b83baf800000000752283f80377118dbcc5320100008d95f600000031c0eb4e83e8048dbcc552010000eb3983f803762d83e8048dbcc55201000031c081bd1e0100000000803f"
+	"740d8b8a0c010000837904000f95c08d950a010000eb108dbcc53201000031c9890f894f04eb668b9ee31300008b8ef314000085c97e5683ec08d903d91c24d902d80c24d807d95c2404d94204d80c24d9420cd84c2404d9e0dec1d84704d91fd94208d80c24d94210d84c2404d9e0dec1d95f04d9442404"
+	"85c07406d88d1e010000d91b83c3044975b083c40861e90501000090ad58583f49c80c3fd122563ec26ccabe1a204c3e0000803f000000000000000000000000000000000000803f0000803f18594b3f00000000000000000000000000000000000000000000000000000000000000000000000000000000"
+	"00000000000000000000000000000000908db4260000000060e8000000005d8b942430010000837a040074208b8ef314000085c97e168dbe930d0000d907d88db2ffffffd91f83c7044975f0618b942410010000c3"
 )
-SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x1E8
+SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x210
+VOICED_S_BOOST_OFFSET = 0x224
+VOICED_GAIN_OFFSET = 0x228
+VOICED_BUFFER_PROCESS_OFFSET = 0x270
 SIBILANCE_FILTER_FREQUENCY = 4800.0
 SPLIT_FILTER_BLOCK_OFFSET = 0x300
 DIRECT_FILTER_PROCESS_OFFSET = 0x320
@@ -75,6 +72,8 @@ FRICATION_PROCESS_CALL_OFFSET = 0x3C
 FRICATION_PROCESS_OFFSET = 0x150
 FRICATION_INACTIVE_TAIL_OFFSET = 0x1F
 FRICATION_INACTIVE_TAIL = bytes.fromhex("89500c895010eb1d")
+FRICATION_RETURN_TAIL_OFFSET = 0x44
+FRICATION_RETURN_TAIL = bytes.fromhex("618b94240c010000c3")
 SPLIT_BAND_COEFFICIENTS = (
 	0.8451030710061816,
 	0.5499311376530391,
@@ -422,10 +421,16 @@ def make_sibilance_rolloff_patch(
 	gain_db: float,
 	makeup_db: float,
 	b6_multiplier: float,
+	voiced_gain_db: float = 0.0,
+	voiced_s_boost_db: float = 0.0,
 ) -> None:
-	"""Filter hard-routed s/t/z stages and optionally widen cascade B6 further."""
+	"""Build one hard-routed sibilance, B6 and voiced-level comparison."""
 	if b6_multiplier < BASE_B6_MULTIPLIER:
 		raise ValueError("Comparison B6 multiplier must not be narrower than its base")
+	if voiced_gain_db > 0.0:
+		raise ValueError("Voiced comparison gain must not boost the general voiced path")
+	if voiced_s_boost_db < 0.0:
+		raise ValueError("Voiced-s comparison gain must not attenuate voiced s")
 	coefficients = _sibilance_filter_coefficients(
 		SIBILANCE_FILTER_FREQUENCY,
 		gain_db,
@@ -456,11 +461,27 @@ def make_sibilance_rolloff_patch(
 
 	code = bytearray(SIBILANCE_ROLLOFF_FILTER_CODE)
 	struct.pack_into("<5f", code, SIBILANCE_FILTER_COEFFICIENT_OFFSET, *coefficients)
+	struct.pack_into("<f", code, VOICED_S_BOOST_OFFSET, 10.0 ** (voiced_s_boost_db / 20.0))
+	struct.pack_into("<f", code, VOICED_GAIN_OFFSET, 10.0 ** (voiced_gain_db / 20.0))
 	modified_append = bytearray(append_new)
 	modified_append[b6_code_in_append : b6_code_in_append + len(base_b6_code)] = (
 		_b6_bandwidth_code(b6_multiplier)
 	)
 	modified_append[code_in_append : code_in_append + len(code)] = code
+
+	frication_return = entry_in_append + 0x100 + FRICATION_RETURN_TAIL_OFFSET
+	if modified_append[frication_return : frication_return + len(FRICATION_RETURN_TAIL)] != (
+		FRICATION_RETURN_TAIL
+	):
+		raise ValueError(f"Native-frication return tail was not found in {source}")
+	if voiced_gain_db < 0.0:
+		call_offset = 0x100 + FRICATION_RETURN_TAIL_OFFSET + 1
+		call_target = SPLIT_FILTER_BLOCK_OFFSET + VOICED_BUFFER_PROCESS_OFFSET
+		call_displacement = call_target - (call_offset + 5)
+		patched_return = b"\x61\xe8" + struct.pack("<i", call_displacement) + b"\x90\x90\xc3"
+		if len(patched_return) != len(FRICATION_RETURN_TAIL):
+			raise AssertionError("Voiced-buffer hook must preserve the frication return tail size")
+		modified_append[frication_return : frication_return + len(patched_return)] = patched_return
 	runs[append_index] = (append_offset, append_old, bytes(modified_append))
 	_write_runs(destination, original_size, patched_size, runs)
 
@@ -480,17 +501,20 @@ def main() -> None:
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fu"), True)
 		make_targeted_consonant_damping_patch(wide_b6, source.with_suffix(".p16st"))
 		reference = source.with_suffix(".p16st")
-		for suffix, b6_multiplier in (
-			(".p16s1", 4.0),
-			(".p16s2", 4.25),
-			(".p16s3", 4.5),
+		for suffix, voiced_gain_db, voiced_s_boost_db in (
+			(".p16s1", 0.0, 0.0),
+			(".p16s2", -1.0, 1.0),
+			(".p16s3", -2.0, 1.0),
+			(".p16s4", -1.0, 2.0),
 		):
 			make_sibilance_rolloff_patch(
 				reference,
 				source.with_suffix(suffix),
 				-6.0,
 				1.5,
-				b6_multiplier,
+				4.5,
+				voiced_gain_db,
+				voiced_s_boost_db,
 			)
 
 

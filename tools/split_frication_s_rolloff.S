@@ -105,6 +105,7 @@ filterParallelFrication:
 	ja .LclearInactiveST
 	leal (parallelStates-.LparallelBase)(%ebp,%eax,8), %edi
 	leal (tiltB0-.LparallelBase)(%ebp), %edx
+	xorl %eax, %eax
 	jmp .LfilterParallel
 
 .LclearInactiveST:
@@ -119,6 +120,18 @@ filterParallelFrication:
 	jbe .LclearBypassedCH
 	subl $4, %eax
 	leal (sibilanceStates-.LparallelBase)(%ebp,%eax,8), %edi
+
+	/* A unity placeholder keeps the established baseline bit-identical. For a
+	 * comparison boost, the outer frame's current AV value at +4 distinguishes
+	 * voiced z/s from unvoiced s/t without carrying detector state across the
+	 * hard consonant boundary. */
+	xorl %eax, %eax
+	cmpl $0x3f800000, (voicedSBoost-.LparallelBase)(%ebp)
+	je .LsibilanceCoefficients
+	movl 0x10c(%edx), %ecx
+	cmpl $0, 4(%ecx)
+	setne %al
+.LsibilanceCoefficients:
 	leal (sibilanceB0-.LparallelBase)(%ebp), %edx
 	jmp .LfilterParallel
 
@@ -164,6 +177,10 @@ filterParallelFrication:
 	fstps 4(%edi)
 
 	flds 4(%esp)
+	testl %eax, %eax
+	je .LstoreParallel
+	fmuls (voicedSBoost-.LparallelBase)(%ebp)
+.LstoreParallel:
 	fstps (%ebx)
 	addl $4, %ebx
 	decl %ecx
@@ -199,6 +216,11 @@ sibilanceA1:
 sibilanceA2:
 	.float 0.0
 
+voicedSBoost:
+	.float 1.0
+voicedGain:
+	.float 1.0
+
 directGain:
 	.float 0.7943282347242815
 
@@ -215,4 +237,40 @@ parallelStates:
 sibilanceStates:
 	.float 0.0, 0.0
 	.float 0.0, 0.0
+
+	/* Called from the native-frication wrapper before its original return. At
+	 * this point the cascade/voiced buffer exists at d93, while direct frication
+	 * and the parallel consonant buffers have not been added yet. Scaling here
+	 * therefore leaves all unvoiced consonant paths untouched. */
+	.balign 16
+	.globl scaleVoicedBuffer
+	.type scaleVoicedBuffer,@function
+scaleVoicedBuffer:
+	pushal
+	call .LvoicedBase
+.LvoicedBase:
+	popl %ebp
+
+	/* The nested CALL and PUSHAL put the outer frame pointer at ESP+130h. AV is
+	 * the float at frame+4; an exact zero means the current frame is unvoiced. */
+	movl 0x130(%esp), %edx
+	cmpl $0, 4(%edx)
+	je .LvoicedDone
+	movl 0x14f3(%esi), %ecx
+	testl %ecx, %ecx
+	jle .LvoicedDone
+	leal 0x0d93(%esi), %edi
+.LvoicedLoop:
+	flds (%edi)
+	fmuls (voicedGain-.LvoicedBase)(%ebp)
+	fstps (%edi)
+	addl $4, %edi
+	decl %ecx
+	jne .LvoicedLoop
+
+.LvoicedDone:
+	popal
+	/* Reproduce the instruction replaced by the outer frication hook. */
+	movl 0x110(%esp), %edx
+	ret
 	.section .note.GNU-stack,"",@progbits

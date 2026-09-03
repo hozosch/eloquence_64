@@ -318,22 +318,36 @@ def test_split_frication_patches_use_real_direct_and_parallel_branches(tmp_path)
 
 def test_sibilance_rolloff_patches_filter_only_the_hard_routed_high_stages(tmp_path):
 	builder = _load_patch_builder()
-	assert len(builder.SIBILANCE_ROLLOFF_FILTER_CODE) == 568
+	assert len(builder.SIBILANCE_ROLLOFF_FILTER_CODE) == 685
 	assert struct.unpack_from(
 		"<5f",
 		builder.SIBILANCE_ROLLOFF_FILTER_CODE,
 		builder.SIBILANCE_FILTER_COEFFICIENT_OFFSET,
 	) == (1.0, 0.0, 0.0, 0.0, 0.0)
+	assert struct.unpack_from(
+		"<2f",
+		builder.SIBILANCE_ROLLOFF_FILTER_CODE,
+		builder.VOICED_S_BOOST_OFFSET,
+	) == (1.0, 1.0)
 	variants = (
-		(".p16s1", 4.0),
-		(".p16s2", 4.25),
-		(".p16s3", 4.5),
+		(".p16s1", 0.0, 0.0),
+		(".p16s2", -1.0, 1.0),
+		(".p16s3", -2.0, 1.0),
+		(".p16s4", -1.0, 2.0),
 	)
 	for reference in sorted(PATCH_DIR.glob("*.p16st")):
 		_original_size, _patched_size, reference_runs = builder._read_runs(reference.read_bytes())
-		for suffix, b6_multiplier in variants:
+		for suffix, voiced_gain_db, voiced_s_boost_db in variants:
 			generated = tmp_path / reference.with_suffix(suffix).name
-			builder.make_sibilance_rolloff_patch(reference, generated, -6.0, 1.5, b6_multiplier)
+			builder.make_sibilance_rolloff_patch(
+				reference,
+				generated,
+				-6.0,
+				1.5,
+				4.5,
+				voiced_gain_db,
+				voiced_s_boost_db,
+			)
 			committed = reference.with_suffix(suffix)
 			assert generated.read_bytes() == committed.read_bytes()
 
@@ -347,7 +361,7 @@ def test_sibilance_rolloff_patches_filter_only_the_hard_routed_high_stages(tmp_p
 			b6_multiplier_offset = (
 				entry + builder.B6_CODE_OFFSET + builder.B6_MULTIPLIER_OFFSET
 			)
-			assert struct.unpack_from("<f", append, b6_multiplier_offset)[0] == b6_multiplier
+			assert struct.unpack_from("<f", append, b6_multiplier_offset)[0] == 4.5
 			code_offset = entry + builder.SPLIT_FILTER_BLOCK_OFFSET
 			expected_code = bytearray(builder.SIBILANCE_ROLLOFF_FILTER_CODE)
 			coefficients = builder._sibilance_filter_coefficients(
@@ -361,23 +375,59 @@ def test_sibilance_rolloff_patches_filter_only_the_hard_routed_high_stages(tmp_p
 				builder.SIBILANCE_FILTER_COEFFICIENT_OFFSET,
 				*coefficients,
 			)
+			struct.pack_into(
+				"<f",
+				expected_code,
+				builder.VOICED_S_BOOST_OFFSET,
+				10.0 ** (voiced_s_boost_db / 20.0),
+			)
+			struct.pack_into(
+				"<f",
+				expected_code,
+				builder.VOICED_GAIN_OFFSET,
+				10.0 ** (voiced_gain_db / 20.0),
+			)
 			assert append[code_offset : code_offset + len(expected_code)] == expected_code
+
+			frication_return = entry + 0x100 + builder.FRICATION_RETURN_TAIL_OFFSET
+			if voiced_gain_db < 0.0:
+				patched_return = append[
+					frication_return : frication_return + len(builder.FRICATION_RETURN_TAIL)
+				]
+				assert patched_return[:2] == b"\x61\xe8"
+				call_offset = 0x100 + builder.FRICATION_RETURN_TAIL_OFFSET + 1
+				call_target = call_offset + 5 + struct.unpack_from("<i", patched_return, 2)[0]
+				assert call_target == (
+					builder.SPLIT_FILTER_BLOCK_OFFSET + builder.VOICED_BUFFER_PROCESS_OFFSET
+				)
+				assert patched_return[-3:] == b"\x90\x90\xc3"
+			else:
+				assert append[
+					frication_return : frication_return + len(builder.FRICATION_RETURN_TAIL)
+				] == builder.FRICATION_RETURN_TAIL
 			differences = {
 				i for i, pair in enumerate(zip(append, reference_append)) if pair[0] != pair[1]
 			}
 			assert differences
 			allowed_differences = set(range(code_offset, code_offset + len(expected_code)))
 			allowed_differences.update(range(b6_multiplier_offset, b6_multiplier_offset + 4))
+			allowed_differences.update(
+				range(frication_return, frication_return + len(builder.FRICATION_RETURN_TAIL))
+			)
 			assert differences <= allowed_differences
 			assert [run for run in runs if run[0] != original_size] == [
 				run for run in reference_runs if run[0] != original_size
 			]
 
 	code = builder.SIBILANCE_ROLLOFF_FILTER_CODE
-	assert code.startswith(bytes.fromhex("89500c895010578db82c02000089d0b90e000000"))
+	assert code.startswith(bytes.fromhex("89500c895010578db85c02000089d0b90e000000"))
 	assert bytes.fromhex("83baf400000000") in code
 	assert bytes.fromhex("83baf800000000") in code
 	assert bytes.fromhex("83f805") in code
+	# The voiced-s boost reads the current outer frame's AV target directly;
+	# the general gain routine processes the main buffer before frication mix-in.
+	assert bytes.fromhex("8b8a0c010000837904000f95c0") in code
+	assert code[builder.VOICED_BUFFER_PROCESS_OFFSET :].startswith(b"\x60\xe8")
 
 
 def test_sibilance_rolloff_code_stays_before_the_mapped_original_mixer():
@@ -388,7 +438,7 @@ def test_sibilance_rolloff_code_stays_before_the_mapped_original_mixer():
 		builder.ORIGINAL_PARALLEL_MIXER_OFFSET - builder.SPLIT_FILTER_BLOCK_OFFSET
 	)
 	for syn in syns:
-		for suffix in (".p16s1", ".p16s2", ".p16s3"):
+		for suffix in (".p16s1", ".p16s2", ".p16s3", ".p16s4"):
 			patch = syn.with_suffix(suffix)
 			original = bytearray(syn.read_bytes())
 			original_size, patched_size, runs = builder._read_runs(patch.read_bytes())
