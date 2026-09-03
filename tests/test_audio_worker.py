@@ -73,7 +73,7 @@ class FakeHostProcess:
 
 
 class SampleRateModeTests(unittest.TestCase):
-	def test_experiment_exposes_upper_mid_and_sibilance_rolloff_comparisons(self):
+	def test_experiment_exposes_upper_mid_and_b6_width_comparisons(self):
 		module = _load_client_module()
 		self.assertEqual(
 			module._ECI_BASE_RATE_MAP,

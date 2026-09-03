@@ -14,6 +14,9 @@ TABLE_SUFFIX = bytes.fromhex(
 	"497e543f9d1ee8bf664250bf"
 )
 B6_LOAD = bytes.fromhex("d947548b4758")
+B6_CODE_OFFSET = 0x60
+B6_MULTIPLIER_OFFSET = 4
+BASE_B6_MULTIPLIER = 4.0
 CASCADE_PROCESS_COUNT_LOAD = bytes.fromhex("8b864b180000")
 FRICATION_BUFFER_LOAD = bytes.fromhex("8b942408010000")
 XFLT_ENTRY = bytes.fromhex("50e80000000058d98046000000")
@@ -236,6 +239,17 @@ def _xflt_runtime_offset(runs: list[tuple[int, bytes, bytes]], source: Path) -> 
 	return hook_offset + 5 + struct.unpack_from("<i", hook_new, 1)[0]
 
 
+def _b6_bandwidth_code(multiplier: float) -> bytes:
+	return (
+		b"\xd9\x47\x54"  # fld dword ptr [edi+54h] (F6)
+		+ b"\x68" + struct.pack("<f", multiplier)  # temporary multiplier
+		+ b"\xd9\x47\x58"  # fld dword ptr [edi+58h] (B6)
+		+ b"\xd8\x0c\x24"  # fmul dword ptr [esp]
+		+ b"\xd9\x1c\x24"  # fstp dword ptr [esp]
+		+ b"\x58\xc3"  # pop eax; ret (F6 remains on the x87 stack)
+	)
+
+
 def make_b6_bandwidth_patch(source: Path, destination: Path, multiplier: float) -> None:
 	"""Widen only the sixth cascade formant inside the native Klatt engine."""
 	if multiplier <= 1.0:
@@ -251,7 +265,7 @@ def make_b6_bandwidth_patch(source: Path, destination: Path, multiplier: float) 
 	# The first existing hook enters the appended .xflt section.  Deriving its
 	# target from the relative call keeps this independent of each SYN's size.
 	xflt_entry_offset = _xflt_runtime_offset(runs, source)
-	b6_code_offset = xflt_entry_offset + 0x60
+	b6_code_offset = xflt_entry_offset + B6_CODE_OFFSET
 
 	append_indices = [i for i, (offset, old, _new) in enumerate(runs) if offset == original_size and not old]
 	if len(append_indices) != 1:
@@ -261,15 +275,8 @@ def make_b6_bandwidth_patch(source: Path, destination: Path, multiplier: float) 
 	entry_in_append = append_new.find(XFLT_ENTRY)
 	if entry_in_append < 0 or append_new.find(XFLT_ENTRY, entry_in_append + 1) >= 0:
 		raise ValueError(f"Could not uniquely locate .xflt code in {source}")
-	code_in_append = entry_in_append + 0x60
-	code = (
-		b"\xd9\x47\x54"  # fld dword ptr [edi+54h] (F6)
-		+ b"\x68" + struct.pack("<f", multiplier)  # temporary multiplier
-		+ b"\xd9\x47\x58"  # fld dword ptr [edi+58h] (B6)
-		+ b"\xd8\x0c\x24"  # fmul dword ptr [esp]
-		+ b"\xd9\x1c\x24"  # fstp dword ptr [esp]
-		+ b"\x58\xc3"  # pop eax; ret (F6 remains on the x87 stack)
-	)
+	code_in_append = entry_in_append + B6_CODE_OFFSET
+	code = _b6_bandwidth_code(multiplier)
 	if append_new[code_in_append : code_in_append + len(code)] != b"\x90" * len(code):
 		raise ValueError(f"B6 code cave is not empty in {source}")
 	modified_append = bytearray(append_new)
@@ -414,8 +421,11 @@ def make_sibilance_rolloff_patch(
 	destination: Path,
 	gain_db: float,
 	makeup_db: float,
+	b6_multiplier: float,
 ) -> None:
-	"""Filter only the hard-routed native s/t/z stages after their resonators."""
+	"""Filter hard-routed s/t/z stages and optionally widen cascade B6 further."""
+	if b6_multiplier < BASE_B6_MULTIPLIER:
+		raise ValueError("Comparison B6 multiplier must not be narrower than its base")
 	coefficients = _sibilance_filter_coefficients(
 		SIBILANCE_FILTER_FREQUENCY,
 		gain_db,
@@ -430,6 +440,10 @@ def make_sibilance_rolloff_patch(
 	entry_in_append = append_new.find(XFLT_ENTRY)
 	if entry_in_append < 0 or append_new.find(XFLT_ENTRY, entry_in_append + 1) >= 0:
 		raise ValueError(f"Could not uniquely locate .xflt code in {source}")
+	b6_code_in_append = entry_in_append + B6_CODE_OFFSET
+	base_b6_code = _b6_bandwidth_code(BASE_B6_MULTIPLIER)
+	if append_new[b6_code_in_append : b6_code_in_append + len(base_b6_code)] != base_b6_code:
+		raise ValueError(f"Base B6 bandwidth code was not found in {source}")
 	code_in_append = entry_in_append + SPLIT_FILTER_BLOCK_OFFSET
 	base_end = code_in_append + len(SPLIT_FRICATION_FILTER_CODE)
 	code_end = code_in_append + len(SIBILANCE_ROLLOFF_FILTER_CODE)
@@ -443,6 +457,9 @@ def make_sibilance_rolloff_patch(
 	code = bytearray(SIBILANCE_ROLLOFF_FILTER_CODE)
 	struct.pack_into("<5f", code, SIBILANCE_FILTER_COEFFICIENT_OFFSET, *coefficients)
 	modified_append = bytearray(append_new)
+	modified_append[b6_code_in_append : b6_code_in_append + len(base_b6_code)] = (
+		_b6_bandwidth_code(b6_multiplier)
+	)
 	modified_append[code_in_append : code_in_append + len(code)] = code
 	runs[append_index] = (append_offset, append_old, bytes(modified_append))
 	_write_runs(destination, original_size, patched_size, runs)
@@ -463,12 +480,18 @@ def main() -> None:
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fu"), True)
 		make_targeted_consonant_damping_patch(wide_b6, source.with_suffix(".p16st"))
 		reference = source.with_suffix(".p16st")
-		for suffix, gain_db, makeup_db in (
-			(".p16s1", -6.0, 1.5),
-			(".p16s2", -10.0, 2.5),
-			(".p16s3", -14.0, 3.5),
+		for suffix, b6_multiplier in (
+			(".p16s1", 4.0),
+			(".p16s2", 4.25),
+			(".p16s3", 4.5),
 		):
-			make_sibilance_rolloff_patch(reference, source.with_suffix(suffix), gain_db, makeup_db)
+			make_sibilance_rolloff_patch(
+				reference,
+				source.with_suffix(suffix),
+				-6.0,
+				1.5,
+				b6_multiplier,
+			)
 
 
 if __name__ == "__main__":

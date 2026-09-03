@@ -112,8 +112,12 @@ def test_wide_b6_patches_hook_only_the_sixth_bandwidth_load(tmp_path):
 			extra_runs = [run for run in wide_runs if run not in base_runs]
 			assert any(old == builder.B6_LOAD and new[:1] == b"\xe8" for _off, old, new in extra_runs)
 			append = next(new for _off, old, new in wide_runs if not old and builder.XFLT_ENTRY in new)
-			code_offset = append.index(builder.XFLT_ENTRY) + 0x60
-			assert struct.unpack_from("<f", append, code_offset + 4)[0] == multiplier
+			code_offset = append.index(builder.XFLT_ENTRY) + builder.B6_CODE_OFFSET
+			assert struct.unpack_from(
+				"<f",
+				append,
+				code_offset + builder.B6_MULTIPLIER_OFFSET,
+			)[0] == multiplier
 
 
 def test_native_frication_patches_use_the_internal_noise_buffer(tmp_path):
@@ -321,15 +325,15 @@ def test_sibilance_rolloff_patches_filter_only_the_hard_routed_high_stages(tmp_p
 		builder.SIBILANCE_FILTER_COEFFICIENT_OFFSET,
 	) == (1.0, 0.0, 0.0, 0.0, 0.0)
 	variants = (
-		(".p16s1", -6.0, 1.5),
-		(".p16s2", -10.0, 2.5),
-		(".p16s3", -14.0, 3.5),
+		(".p16s1", 4.0),
+		(".p16s2", 4.25),
+		(".p16s3", 4.5),
 	)
 	for reference in sorted(PATCH_DIR.glob("*.p16st")):
 		_original_size, _patched_size, reference_runs = builder._read_runs(reference.read_bytes())
-		for suffix, gain_db, makeup_db in variants:
+		for suffix, b6_multiplier in variants:
 			generated = tmp_path / reference.with_suffix(suffix).name
-			builder.make_sibilance_rolloff_patch(reference, generated, gain_db, makeup_db)
+			builder.make_sibilance_rolloff_patch(reference, generated, -6.0, 1.5, b6_multiplier)
 			committed = reference.with_suffix(suffix)
 			assert generated.read_bytes() == committed.read_bytes()
 
@@ -340,12 +344,16 @@ def test_sibilance_rolloff_patches_filter_only_the_hard_routed_high_stages(tmp_p
 			)
 			entry = append.index(builder.XFLT_ENTRY)
 			assert reference_append.index(builder.XFLT_ENTRY) == entry
+			b6_multiplier_offset = (
+				entry + builder.B6_CODE_OFFSET + builder.B6_MULTIPLIER_OFFSET
+			)
+			assert struct.unpack_from("<f", append, b6_multiplier_offset)[0] == b6_multiplier
 			code_offset = entry + builder.SPLIT_FILTER_BLOCK_OFFSET
 			expected_code = bytearray(builder.SIBILANCE_ROLLOFF_FILTER_CODE)
 			coefficients = builder._sibilance_filter_coefficients(
 				builder.SIBILANCE_FILTER_FREQUENCY,
-				gain_db,
-				makeup_db,
+				-6.0,
+				1.5,
 			)
 			struct.pack_into(
 				"<5f",
@@ -358,8 +366,9 @@ def test_sibilance_rolloff_patches_filter_only_the_hard_routed_high_stages(tmp_p
 				i for i, pair in enumerate(zip(append, reference_append)) if pair[0] != pair[1]
 			}
 			assert differences
-			assert min(differences) >= code_offset
-			assert max(differences) < code_offset + len(expected_code)
+			allowed_differences = set(range(code_offset, code_offset + len(expected_code)))
+			allowed_differences.update(range(b6_multiplier_offset, b6_multiplier_offset + 4))
+			assert differences <= allowed_differences
 			assert [run for run in runs if run[0] != original_size] == [
 				run for run in reference_runs if run[0] != original_size
 			]
@@ -411,15 +420,14 @@ def test_sibilance_rolloff_preserves_lower_presence_and_reduces_only_the_top():
 		response = (b0 + b1 * z + b2 * z * z) / (1 + a1 * z + a2 * z * z)
 		return 20 * math.log10(abs(response))
 
-	for gain_db, makeup_db in ((-6.0, 1.5), (-10.0, 2.5), (-14.0, 3.5)):
-		coefficients = builder._sibilance_filter_coefficients(
-			builder.SIBILANCE_FILTER_FREQUENCY,
-			gain_db,
-			makeup_db,
-		)
-		assert abs(response_db(coefficients, 4000)) < 0.2
-		assert response_db(coefficients, 3000) > 1.0
-		assert abs(response_db(coefficients, 7500) - (gain_db + makeup_db)) < 0.1
+	coefficients = builder._sibilance_filter_coefficients(
+		builder.SIBILANCE_FILTER_FREQUENCY,
+		-6.0,
+		1.5,
+	)
+	assert abs(response_db(coefficients, 4000)) < 0.2
+	assert response_db(coefficients, 3000) > 1.0
+	assert abs(response_db(coefficients, 7500) - (-6.0 + 1.5)) < 0.1
 
 
 def test_targeted_spectral_pivot_raises_lows_and_rolls_off_upper_frication():

@@ -1032,10 +1032,10 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		rates["1"] = StringParameterInfo("1", "11 kHz")
 		rates["2"] = StringParameterInfo("2", "16 kHz (v21 reference)")
 		rates["3"] = StringParameterInfo("3", "16 kHz (upper mids, native v21 sibilance)")
-		rates["4"] = StringParameterInfo("4", "16 kHz (upper mids, sibilance roll-off mild)")
-		rates["5"] = StringParameterInfo("5", "16 kHz (upper mids, sibilance roll-off medium)")
-		rates["21"] = StringParameterInfo("21", "16 kHz (upper mids, sibilance roll-off strong)")
-		rates["22"] = StringParameterInfo("22", "16 kHz (sibilance roll-off medium, no mid EQ)")
+		rates["4"] = StringParameterInfo("4", "16 kHz (upper mids, mild roll-off, B6 x4.0)")
+		rates["5"] = StringParameterInfo("5", "16 kHz (upper mids, mild roll-off, B6 x4.25)")
+		rates["21"] = StringParameterInfo("21", "16 kHz (upper mids, mild roll-off, B6 x4.5)")
+		rates["22"] = StringParameterInfo("22", "16 kHz (mild roll-off, B6 x4.25, no mid EQ)")
 		return rates
 
 	def _set_sampleRate(self, val):
