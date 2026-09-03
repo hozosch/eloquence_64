@@ -73,98 +73,44 @@ class FakeHostProcess:
 
 
 class SampleRateModeTests(unittest.TestCase):
-	def test_experiment_compares_peak_widths_with_additive_low_bass(self):
+	def test_release_keeps_only_one_native16_mode(self):
 		module = _load_client_module()
 		self.assertEqual(
 			module._ECI_BASE_RATE_MAP,
 			{
 				0: 8000,
 				1: 11025,
-				2: 16000,
-				3: 16000,
 				4: 16000,
-				5: 16000,
-				21: 16000,
-				22: 16000,
 			},
 		)
-		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2, 3, 4, 5, 21, 22})
-		self.assertEqual(module._BANDWIDTH_SHELVES[2], module._V21_BANDWIDTH_SHELF)
-		self.assertEqual(module._BANDWIDTH_SHELVES[3], module._UPPER_MID_BANDWIDTH_SHELF)
-		for mode in (4, 5, 21, 22):
-			self.assertEqual(module._BANDWIDTH_SHELVES[mode], module._V21_BANDWIDTH_SHELF)
-		self.assertEqual(
-			module._BANDWIDTH_PEAKS,
-			{
-				4: module._FOUR_KHZ_PRESENCE_PEAK_Q15,
-				5: module._FOUR_KHZ_PRESENCE_PEAK_Q125,
-				21: module._FOUR_KHZ_PRESENCE_PEAK_Q10,
-				22: module._FOUR_KHZ_PRESENCE_PEAK_Q15,
-			},
-		)
-		self.assertEqual(set(module._BANDWIDTH_LOW_SHELVES), {4, 5, 21})
-		for mode in (4, 5, 21):
-			self.assertEqual(module._BANDWIDTH_LOW_SHELVES[mode], module._LOW_BASS_SHELF)
-		self.assertNotIn(22, module._BANDWIDTH_LOW_SHELVES)
 
-	def test_current_comparison_modes_are_preserved_and_retired_modes_migrate(self):
+	def test_retired_native16_modes_migrate_to_the_release_reference(self):
 		module = _load_client_module()
-		for current_mode in (2, 3, 4, 5, 21, 22):
-			with self.subTest(current_mode=current_mode):
-				self.assertEqual(module._normalize_rate_mode(current_mode), current_mode)
-		for old_mode in range(6, 21):
+		self.assertEqual(module._normalize_rate_mode(4), 4)
+		for old_mode in set(range(2, 23)) - {4}:
 			with self.subTest(old_mode=old_mode):
-				self.assertEqual(module._normalize_rate_mode(old_mode), 2)
+				self.assertEqual(module._normalize_rate_mode(old_mode), 4)
 		self.assertEqual(module._normalize_rate_mode(0), 0)
 		self.assertEqual(module._normalize_rate_mode(1), 1)
 		self.assertEqual(module._normalize_rate_mode(23), 1)
 
-	def test_new_comparisons_add_low_bass_without_replacing_existing_eq(self):
+	def test_audio_worker_does_not_apply_a_client_side_eq(self):
 		module = _load_client_module()
 		module._current_sample_rate_mode = 4
-		peak_worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
-		self.assertIsInstance(peak_worker._bandwidth_filter, module.FilterChain)
-		self.assertEqual(
-			[type(filt) for filt in peak_worker._bandwidth_filter._filters],
-			[module.LowShelfFilter, module.CascadedHighShelfFilter, module.PeakingEQFilter],
-		)
+		events = []
+		worker = module.AudioWorker(FakePlayer(events), queue.Queue(), FakeClient())
+		data = b"\x00\x00\x34\x12\xff\x7f"
+		worker._feed_audio(data, None, False)
+		self.assertEqual(events, [("feed", data)])
+		self.assertFalse(hasattr(worker, "_bandwidth_filter"))
 
-		module._current_sample_rate_mode = 22
-		control_worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
-		self.assertIsInstance(control_worker._bandwidth_filter, module.FilterChain)
-		self.assertEqual(
-			[type(filt) for filt in control_worker._bandwidth_filter._filters],
-			[module.CascadedHighShelfFilter, module.PeakingEQFilter],
-		)
-
-	def test_presence_contour_toggle_waits_for_next_speech_block(self):
+	def test_presence_contour_selects_a_native_patch_variant(self):
 		module = _load_client_module()
-		module._current_sample_rate_mode = 4
-		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
-		self.assertIsInstance(worker._bandwidth_filter._filters[-1], module.PeakingEQFilter)
-
-		module.set_presence_contour(False)
-		# Do not alter an in-flight block and create a discontinuity.
-		self.assertIsInstance(worker._bandwidth_filter._filters[-1], module.PeakingEQFilter)
-		worker._start_filter_sequence(1)
-		self.assertEqual(
-			[type(filt) for filt in worker._bandwidth_filter._filters],
-			[module.LowShelfFilter, module.CascadedHighShelfFilter],
-		)
-
-		module.set_presence_contour(True)
-		worker._start_filter_sequence(2)
-		self.assertEqual(
-			[type(filt) for filt in worker._bandwidth_filter._filters],
-			[module.LowShelfFilter, module.CascadedHighShelfFilter, module.PeakingEQFilter],
-		)
-
-	def test_presence_contour_has_no_effect_on_original_rates(self):
-		module = _load_client_module()
-		module._current_sample_rate_mode = 1
-		module.set_presence_contour(False)
-		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
-		self.assertIsNone(worker._bandwidth_filter)
+		self.assertTrue(module.get_presence_contour())
+		self.assertTrue(module.set_presence_contour(False))
+		self.assertFalse(module.get_presence_contour())
+		self.assertFalse(module.set_presence_contour(False))
+		self.assertTrue(module.set_presence_contour(True))
 
 
 class WarmEngineReloadTests(unittest.TestCase):

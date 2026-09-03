@@ -20,6 +20,8 @@ resetSplitFrication:
 	/* Direct state, four ch/sch states and two s/t/z states. */
 	movl $14, %ecx
 	rep stosl
+	/* The separate native output block owns the final EQ and gain state. */
+	call .LblockStart + 0x520
 	popl %edi
 	ret
 
@@ -237,44 +239,4 @@ parallelStates:
 sibilanceStates:
 	.float 0.0, 0.0
 	.float 0.0, 0.0
-
-	/* Called after the engine has mixed its cascade, direct-frication and
-	 * parallel paths into the final float buffer at d93. Scaling at this point
-	 * changes the complete voiced frame instead of only its cascade component. */
-	.balign 16
-	.globl scaleVoicedBuffer
-	.type scaleVoicedBuffer,@function
-scaleVoicedBuffer:
-	pushal
-	call .LvoicedBase
-.LvoicedBase:
-	popl %ebp
-
-	/* Use the same hard active-voice flag as the sibilance split. Exact s/t/z
-	 * targets skip the optional comparison gain as well, keeping voiced s fully
-	 * native. The padding preserves the established routine layout. */
-	cmpl $0, 0x1853(%esi)
-	je .LvoicedDone
-	.fill 4, 1, 0x90
-	cmpl $0, 0x114(%esp)
-	jne .LvoicedDone
-	cmpl $0, 0x118(%esp)
-	jne .LvoicedDone
-	movl 0x14f3(%esi), %ecx
-	testl %ecx, %ecx
-	jle .LvoicedDone
-	movl 0x0d93(%esi), %edi
-.LvoicedLoop:
-	flds (%edi)
-	fmuls (voicedGain-.LvoicedBase)(%ebp)
-	fstps (%edi)
-	addl $4, %edi
-	decl %ecx
-	jne .LvoicedLoop
-
-.LvoicedDone:
-	popal
-	/* Reproduce the final-buffer count load replaced by the outer hook. */
-	movl 0x14f3(%esi), %eax
-	ret
 	.section .note.GNU-stack,"",@progbits

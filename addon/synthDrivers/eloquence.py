@@ -720,10 +720,10 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 			False,
 		),
 
-		# Translators: A synth setting that enables the optional 4 kHz contour in 16 kHz modes
+		# Translators: A synth setting that selects the native 4 kHz contour in 16 kHz mode
 		BooleanDriverSetting(
 			"presenceContour",
-			_("Enable &presence contour (16 kHz only)"),
+			_("Enable native &presence contour (16 kHz only)"),
 			True,
 		),
 
@@ -816,6 +816,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 			# IMPORTANT: needed for dynamic settings visibility
 			# Backend selected the persisted engine variant before ECI was started.
 			self._sample_rate = int(_eloquence.get_sample_rate())
+			self._presenceContour = _eloquence.get_presence_contour()
 
 			log.info("Eloquence: Initialization completed successfully")
 
@@ -1037,12 +1038,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		rates = {}
 		rates["0"] = StringParameterInfo("0", "8 kHz")
 		rates["1"] = StringParameterInfo("1", "11 kHz")
-		rates["2"] = StringParameterInfo("2", "16 kHz (v21 reference)")
-		rates["3"] = StringParameterInfo("3", "16 kHz (upper mids, native v21 sibilance)")
-		rates["4"] = StringParameterInfo("4", "16 kHz (4 kHz Q1.5, bass +2 dB)")
-		rates["5"] = StringParameterInfo("5", "16 kHz (4 kHz Q1.25, bass +2 dB)")
-		rates["21"] = StringParameterInfo("21", "16 kHz (4 kHz Q1.0, bass +2 dB)")
-		rates["22"] = StringParameterInfo("22", "16 kHz (4 kHz Q1.5, no bass boost)")
+		rates["4"] = StringParameterInfo("4", "16 kHz (reference: Q1.5, bass +2 dB)")
 		return rates
 
 	def _set_sampleRate(self, val):
@@ -1127,8 +1123,22 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		return self._presenceContour
 
 	def _set_presenceContour(self, enable):
-		self._presenceContour = bool(enable)
-		_eloquence.set_presence_contour(self._presenceContour)
+		enable = bool(enable)
+		if enable == self._presenceContour:
+			return
+		self._presenceContour = enable
+		changed = _eloquence.set_presence_contour(enable)
+		if changed and int(getattr(self, "_sample_rate", 1)) == 4:
+			try:
+				self.cancel()
+				_eloquence.restart_for_sample_rate(
+					4,
+					self._onIndexReached,
+					getattr(self, "_variant", "1"),
+				)
+				log.info("Eloquence host reloaded for native presence contour %s", enable)
+			except Exception:
+				log.exception("Failed to reload Eloquence host for native presence contour")
 
 	def _get_rate(self):
 		return self._paramToPercent(self.getVParam(_eloquence.rate), minRate, maxRate)

@@ -17,6 +17,17 @@ import buildVars  # noqa: E402
 env = Environment(ENV=os.environ, tools=["NVDATool"])
 env.Append(addon_info=buildVars.addon_info)
 env.Append(**buildVars.addon_info)
+# Development patches remain in the repository for reproducibility. Release
+# bundles carry only the two internal variants of the selected 16 kHz mode.
+env["excludePatterns"] = (
+	"synthDrivers/eloquence/*.p16",
+	"synthDrivers/eloquence/*.p16n",
+	"synthDrivers/eloquence/*.p16b*",
+	"synthDrivers/eloquence/*.p16c6",
+	"synthDrivers/eloquence/*.p16fs",
+	"synthDrivers/eloquence/*.p16fu",
+	"synthDrivers/eloquence/*.p16st",
+)
 
 addonDir = Path("addon")
 
@@ -42,7 +53,7 @@ required_proprietary = [eci_dir / "ECI.DLL"] + [eci_dir / f"{name}.SYN" for name
 required_patches = [
 	eci_dir / f"{name}{extension}"
 	for name in patch_names
-	for extension in (".p16st", ".p16s1", ".p16s2", ".p16s3")
+	for extension in (".p16s0", ".p16s1")
 ]
 
 missing = [str(p) for p in required_proprietary if not p.exists()]

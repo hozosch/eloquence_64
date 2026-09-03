@@ -35,10 +35,19 @@ would require modifying the loaded proprietary synthesis module in process
 memory, whereas restarting the isolated host lets Eloquence load the patched
 module normally and keeps the change reversible.
 
-The final 16 kHz tuning preserves the engine's native `s`, voiced `s`, and `t`
-paths. Exact synthesis target flags route the remaining selected consonant paths
-through a separate spectral pivot, so filter state cannot spill from one class
-into the next. See [the native-16 design record](docs/adr/0002native16.md) for
+The final 16 kHz tuning exposes one reference mode. Exact synthesis target flags
+keep the dedicated `s`, voiced `s`, and `t` path separate from the spectral
+pivot used for the selected consonants, so filter state cannot spill from one
+class into the next. Bass +2 dB, the measured v21 reference shelf, and the
+optional 4 kHz/Q1.5 presence contour run in the injected native float path
+before Eloquence converts its output to PCM16. The general voiced path approaches
+-1.5 dB through a short sample-wise envelope; protected sibilants approach unity
+through the same envelope instead of switching gain at a frame boundary.
+
+Presence on and off are two internal native patch variants, not additional
+sample-rate modes. Changing the checkbox while 16 kHz is active therefore uses
+the warm ECI reload, while changing it at 8 or 11 kHz is deferred until 16 kHz
+is selected. See [the native-16 design record](docs/adr/0002native16.md) for
 details.
 
 ## Traditional Chinese Script Conversion

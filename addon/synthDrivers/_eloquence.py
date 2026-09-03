@@ -17,8 +17,6 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 from . import _eloquence_ipc as _ipc
 from . import _eloquence_job as _job
-from ._bandwidth_shaping import CascadedHighShelfFilter, FilterChain, LowShelfFilter, PeakingEQFilter
-
 import config
 import nvwave
 from buildVersion import version_year
@@ -39,47 +37,7 @@ HOST_EXIT_TIMEOUT = 3.0
 _ECI_BASE_RATE_MAP = {
 	0: 8000,
 	1: 11025,
-	2: 16000,  # v21 reference
-	3: 16000,  # measured upper-mid correction, native v21 sibilance
-	4: 16000,  # v21 EQ, 4 kHz Q1.5 and low bass
-	5: 16000,  # v21 EQ, 4 kHz Q1.25 and low bass
-	21: 16000,  # v21 EQ, 4 kHz Q1.0 and low bass
-	22: 16000,  # Q1.5 control without the low-bass shelf
-}
-_V21_BANDWIDTH_SHELF = ((3430.0, 8.0, 0.406),)
-# The equalized recording has a broad, sustained-energy plateau in the upper
-# mids, but its overall gain and consonant band must not be copied.  Two
-# opposing shelves add about 2.8 dB from 3 to 5 kHz, then converge back to
-# 0 dB at the 8 kHz edge. Cascading this static window with the v21 shelf
-# therefore adds presence without another time-varying consonant detector.
-_UPPER_MID_BANDWIDTH_SHELF = _V21_BANDWIDTH_SHELF + (
-	(1800.0, 3.0, 1.0),
-	(6000.0, -3.0, 1.0),
-)
-_BANDWIDTH_SHELVES = {
-	2: _V21_BANDWIDTH_SHELF,
-	3: _UPPER_MID_BANDWIDTH_SHELF,
-	4: _V21_BANDWIDTH_SHELF,
-	5: _V21_BANDWIDTH_SHELF,
-	21: _V21_BANDWIDTH_SHELF,
-	22: _V21_BANDWIDTH_SHELF,
-}
-# Compare progressively wider 4 kHz peaks on top of the intact v21 reference
-# curve. Even Q=1.0 contributes less than 0.4 dB at 7 kHz.
-_FOUR_KHZ_PRESENCE_PEAK_Q15 = (4000.0, 8.0, 1.5)
-_FOUR_KHZ_PRESENCE_PEAK_Q125 = (4000.0, 8.0, 1.25)
-_FOUR_KHZ_PRESENCE_PEAK_Q10 = (4000.0, 8.0, 1.0)
-_BANDWIDTH_PEAKS = {
-	4: _FOUR_KHZ_PRESENCE_PEAK_Q15,
-	5: _FOUR_KHZ_PRESENCE_PEAK_Q125,
-	21: _FOUR_KHZ_PRESENCE_PEAK_Q10,
-	22: _FOUR_KHZ_PRESENCE_PEAK_Q15,
-}
-_LOW_BASS_SHELF = (220.0, 2.0, 1.0)
-_BANDWIDTH_LOW_SHELVES = {
-	4: _LOW_BASS_SHELF,
-	5: _LOW_BASS_SHELF,
-	21: _LOW_BASS_SHELF,
+	4: 16000,  # release reference: v21 EQ, 4 kHz Q1.5 and low bass
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
@@ -94,10 +52,9 @@ def _normalize_rate_mode(mode, default=1):
 		mode = int(mode)
 	except (TypeError, ValueError):
 		return default
-	# Keep the current comparison modes. Retired native-16 development values
-	# still migrate to the stable v21 reference.
-	if 6 <= mode <= 20:
-		return 2
+	# Migrate every retired native-16 comparison to the release reference.
+	if 2 <= mode <= 22:
+		return 4
 	return mode if mode in _ECI_BASE_RATE_MAP else default
 
 
@@ -193,18 +150,13 @@ def _p16_matches(path, patch_path, enabled):
 	return _p16_matches_data(data, patch_path, enabled)
 
 
-def _prepare_syn_engines(mode):
+def _prepare_syn_engines(mode, presence_enabled=None):
 	"""Switch active SYN files between pristine 8/11 and compact native-16 variants."""
 	base = os.path.join(os.path.dirname(__file__), "eloquence")
 	mode = _normalize_rate_mode(mode)
-	target_ext = {
-		2: ".p16st",
-		3: ".p16st",
-		4: ".p16s1",
-		5: ".p16s2",
-		21: ".p16s3",
-		22: ".p16s4",
-	}.get(mode)
+	if presence_enabled is None:
+		presence_enabled = get_presence_contour()
+	target_ext = (".p16s1" if presence_enabled else ".p16s0") if mode == 4 else None
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
 		dst = next((os.path.join(base, n) for n in candidates if os.path.exists(os.path.join(base, n))), None)
@@ -216,10 +168,8 @@ def _prepare_syn_engines(mode):
 			# Check derived variants before their base patches: a derived patch
 			# contains every run from .p16n and would otherwise be mistaken for it.
 			for ext in (
-				".p16s4",
-				".p16s3",
-				".p16s2",
 				".p16s1",
+				".p16s0",
 				".p16st",
 				".p16fu",
 				".p16fs",
@@ -254,14 +204,7 @@ def _prepare_syn_engines(mode):
 					f.write(data)
 		except Exception:
 			LOGGER.exception("Could not switch %s SYN engine", stem)
-	labels = {
-		2: "v21 native 16 kHz reference",
-		3: "native 16 kHz with measured upper-mid correction",
-		4: "v21 EQ, 4 kHz +8 dB Q1.5 and low bass +2 dB",
-		5: "v21 EQ, 4 kHz +8 dB Q1.25 and low bass +2 dB",
-		21: "v21 EQ, 4 kHz +8 dB Q1.0 and low bass +2 dB",
-		22: "v21 EQ and 4 kHz +8 dB Q1.5 without low-bass boost",
-	}
+	labels = {4: "v21 EQ, 4 kHz +8 dB Q1.5 and low bass +2 dB"}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
 
@@ -273,15 +216,18 @@ def get_presence_contour() -> bool:
 	return _presence_contour_enabled
 
 
-def set_presence_contour(enabled) -> None:
-	"""Enable the optional 4 kHz contour at the next speech-block boundary."""
+def set_presence_contour(enabled) -> bool:
+	"""Select which native 16 kHz patch the next engine load should use."""
 	global _presence_contour_enabled
-	_presence_contour_enabled = bool(enabled)
+	enabled = bool(enabled)
+	changed = enabled != _presence_contour_enabled
+	_presence_contour_enabled = enabled
 	LOGGER.info("Eloquence 16 kHz presence contour %s", "enabled" if enabled else "disabled")
+	return changed
 
 
 def set_sample_rate(mode) -> None:
-	"""Select an original-rate engine or one of the native 16 kHz comparisons."""
+	"""Select an original-rate engine or the native 16 kHz reference."""
 	global _current_sample_rate_mode, _current_variant
 	mode = _normalize_rate_mode(mode)
 	_current_sample_rate_mode = mode
@@ -311,34 +257,6 @@ class AudioWorker(threading.Thread):
 		self._running = True
 		self._stopping = False
 		self._player_lock = threading.RLock()
-		self._filter_mode = get_sample_rate()
-		self._presence_contour_enabled = get_presence_contour()
-		self._bandwidth_filter = self._make_bandwidth_filter()
-		self._filter_sequence: Optional[int] = None
-
-	def _make_bandwidth_filter(self):
-		mode = self._filter_mode
-		curve = _BANDWIDTH_SHELVES.get(mode)
-		peak = _BANDWIDTH_PEAKS.get(mode)
-		low_shelf = _BANDWIDTH_LOW_SHELVES.get(mode)
-		filters = []
-		if low_shelf is not None:
-			filters.append(LowShelfFilter(_ECI_BASE_RATE_MAP[mode], *low_shelf))
-		if curve is not None:
-			filters.append(CascadedHighShelfFilter(_ECI_BASE_RATE_MAP[mode], curve))
-		if self._presence_contour_enabled and peak is not None:
-			filters.append(PeakingEQFilter(_ECI_BASE_RATE_MAP[mode], *peak))
-		return FilterChain(filters) if filters else None
-
-	def _start_filter_sequence(self, seq: int) -> None:
-		"""Apply option changes only between speech blocks to prevent clicks."""
-		presence_contour_enabled = get_presence_contour()
-		if presence_contour_enabled != self._presence_contour_enabled:
-			self._presence_contour_enabled = presence_contour_enabled
-			self._bandwidth_filter = self._make_bandwidth_filter()
-		elif self._bandwidth_filter:
-			self._bandwidth_filter.reset()
-		self._filter_sequence = seq
 
 	def run(self) -> None:
 		pending_audio: Optional[AudioChunk] = None
@@ -350,8 +268,6 @@ class AudioWorker(threading.Thread):
 			if chunk is None:
 				break
 			data, index, is_final, seq = chunk
-			if seq != self._filter_sequence:
-				self._start_filter_sequence(seq)
 			if pending_audio and pending_audio[3] < self._client._sequence:
 				pending_audio = None
 			if seq < self._client._sequence:
@@ -407,8 +323,6 @@ class AudioWorker(threading.Thread):
 		try:
 			with self._player_lock:
 				if not self._stopping and self._player:
-					if self._bandwidth_filter:
-						data = self._bandwidth_filter.process(data)
 					self._player.feed(data, onDone=wrapped_on_done)
 		except FileNotFoundError:
 			LOGGER.warning("Sound device not found during feed")
@@ -986,11 +900,14 @@ def _sync_eci_ini_paths(eloquence_dir):
 
 
 def initialize(indexCallback=None, prepare_engines=True):
-	global onIndexReached, _current_sample_rate_mode, _current_variant
+	global onIndexReached, _current_sample_rate_mode, _current_variant, _presence_contour_enabled
 	config_default = _normalize_rate_mode(config.conf.get("eloquence", {}).get("sampleRate", 1))
 	configured_mode = _read_persisted_rate_mode(config_default)
 	_current_sample_rate_mode = configured_mode
 	if prepare_engines:
+		_presence_contour_enabled = bool(
+			config.conf.get("speech", {}).get("eci", {}).get("presenceContour", True)
+		)
 		_prepare_syn_engines(configured_mode)
 	eci_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "eloquence", "eci.dll"))
 	# Repair ECI.INI before the host loads the engine so voices resolve no
