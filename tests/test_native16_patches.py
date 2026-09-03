@@ -11,7 +11,9 @@ SCRIPT_PATH = ROOT / "tools" / "make_native_s_patches.py"
 
 
 def _bundled_syns():
-	return sorted(PATCH_DIR.glob("*.syn")) + sorted(PATCH_DIR.glob("*.SYN"))
+	# Windows globbing is case-insensitive, so the two patterns can return the
+	# same file twice. Path equality follows the platform's case rules.
+	return sorted(set(PATCH_DIR.glob("*.syn")) | set(PATCH_DIR.glob("*.SYN")))
 
 
 def _pe_rva_for_raw_offset(data: bytes, raw_offset: int) -> int:

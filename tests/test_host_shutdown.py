@@ -172,7 +172,10 @@ class ConfigureLoggingTruncationTests(unittest.TestCase):
 		logging.getLogger().handlers.clear()
 
 	def tearDown(self):
-		logging.getLogger().handlers = self._saved_handlers
+		root_logger = logging.getLogger()
+		for handler in root_logger.handlers:
+			handler.close()
+		root_logger.handlers[:] = self._saved_handlers
 
 	def test_log_file_truncated_on_startup(self):
 		with tempfile.TemporaryDirectory() as log_dir:
