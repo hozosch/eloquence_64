@@ -13,9 +13,9 @@ TABLE_SUFFIX = bytes.fromhex(
 	"497e543f9d1ee8bf664250bf"
 )
 B6_LOAD = bytes.fromhex("d947548b4758")
-B7_LOAD_AND_F6_STORE = bytes.fromhex("8b4f60d99424d4000000")
 CASCADE_PROCESS_COUNT_LOAD = bytes.fromhex("8b864b180000")
 FRICATION_BUFFER_LOAD = bytes.fromhex("8b942408010000")
+SIBILANCE_FREQUENCY_LOAD = bytes.fromhex("d9841ca0000000")
 XFLT_ENTRY = bytes.fromhex("50e80000000058d98046000000")
 FRICATION_FILTER_CODE = bytes.fromhex(
 	"60e8000000005805ce01000083be5b18000000751231d2891089500489500889500c895010eb1d"
@@ -45,18 +45,12 @@ SPLIT_FRICATION_FILTER_CODE = bytes.fromhex(
 	"442404d91b83c3044975aa83c408eb0731d2891789570461e953010000906690ad58583f49c80c3fd122563ec26ccabe1a204c"
 	"3e18594b3f00000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
-ALL_CONSONANT_FILTER_CODE = bytes.fromhex(
-	"89500c895010578db8d001000089d0b90e000000f3ab5fc32e8db42600000000d84c244052e8000000005a83ec08d91c24"
-	"d98262010000d80c24d8827a010000d95c2404d98266010000d80c24d9826e010000d84c2404d9e0dec1d8827e010000d9"
-	"9a7a010000d9826a010000d80c24d98272010000d84c2404d9e0dec1d99a7e010000d9442404d88a7601000083c4085a83"
-	"c40458c3eb672e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db4"
-	"26000000002e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db426"
-	"000000008db4260000000060e8000000005d89d883e80d83f80577738dbcc5a60000008b9ee31300008b8ef314000085c9"
-	"7e5c83ec08d903d91c24d98586000000d80c24d807d95c2404d9858a000000d80c24d98592000000d84c2404d9e0dec1d8"
-	"4704d91fd9858e000000d80c24d98596000000d84c2404d9e0dec1d95f04d9442404d91b83c3044975aa83c40861e97601"
-	"00009090ad58583f49c80c3fd122563ec26ccabe1a204c3e18594b3f00000000000000000000000000000000000000000000"
-	"00000000000000000000000000000000000000000000000000000000000000000000"
+SIBILANCE_PITCH_CODE = bytes.fromhex(
+	"83fb10740583fb14751d83bc1ce4000000007413d9841ca4000000680000803fd80c2483c404c3d9841ca4000000c3"
 )
+SIBILANCE_PITCH_RATIO_OFFSET = 0x1C
+SIBILANCE_PITCH_CODE_OFFSET = 0x500
+SIBILANCE_FREQUENCY_LOAD_DELTA = 0x77C
 SPLIT_FILTER_BLOCK_OFFSET = 0x300
 DIRECT_FILTER_PROCESS_OFFSET = 0x320
 PARALLEL_FILTER_PROCESS_OFFSET = 0x400
@@ -193,7 +187,7 @@ def _xflt_runtime_offset(runs: list[tuple[int, bytes, bytes]], source: Path) -> 
 		run
 		for run in runs
 		if len(run[1]) == 6
-		and run[1] not in (B6_LOAD, B7_LOAD_AND_F6_STORE)
+		and run[1] != B6_LOAD
 		and run[2][:1] == b"\xe8"
 		and run[2][5:] == b"\x90"
 	]
@@ -245,73 +239,6 @@ def make_b6_bandwidth_patch(source: Path, destination: Path, multiplier: float) 
 
 	relative_call = b6_code_offset - (b6_load_offset + 5)
 	runs.insert(append_index, (b6_load_offset, B6_LOAD, b"\xe8" + struct.pack("<i", relative_call) + b"\x90"))
-	_write_runs(destination, original_size, patched_size, runs)
-
-
-def make_seven_cascade_b7_patch(
-	source: Path,
-	destination: Path,
-	bandwidth_multiplier: float,
-) -> None:
-	"""Add a seventh voiced cascade and widen only its B7 bandwidth.
-
-	The shared engine count remains six, so coefficient setup and parallel
-	frication keep their established six stages. The setup path initializes
-	F7/B7 whenever the shared count is greater than five; only the later serial
-	cascade loop is overridden to consume that already initialized seventh pair.
-	"""
-	if bandwidth_multiplier <= 1.0:
-		raise ValueError("B7 bandwidth multiplier must be greater than one")
-	original_size, patched_size, runs = _read_runs(source.read_bytes())
-	count_runs = [run for run in runs if run[1] == b"\x8b\x85\x36\x0a" and run[2] == b"\xb8\x06\x00\x00"]
-	if len(count_runs) != 1:
-		raise ValueError(f"Could not uniquely locate formant-count instruction in {source}")
-	count_offset = count_runs[0][0]
-	b7_load_offset = count_offset + 0x48C
-	cascade_process_count_offset = count_offset + 0x1A79
-
-	xflt_entry_offset = _xflt_runtime_offset(runs, source)
-	b7_code_offset = xflt_entry_offset + 0x80
-	append_indices = [i for i, (offset, old, _new) in enumerate(runs) if offset == original_size and not old]
-	if len(append_indices) != 1:
-		raise ValueError(f"Could not uniquely locate appended .xflt data in {source}")
-	append_index = append_indices[0]
-	append_offset, append_old, append_new = runs[append_index]
-	entry_in_append = append_new.find(XFLT_ENTRY)
-	if entry_in_append < 0 or append_new.find(XFLT_ENTRY, entry_in_append + 1) >= 0:
-		raise ValueError(f"Could not uniquely locate .xflt code in {source}")
-	code_in_append = entry_in_append + 0x80
-	code = (
-		b"\xd9\x94\x24\xd8\x00\x00\x00"  # fst dword ptr [esp+d8h] (call-adjusted F6 store)
-		+ b"\x68" + struct.pack("<f", bandwidth_multiplier)
-		+ b"\xd9\x47\x60"  # fld dword ptr [edi+60h] (B7)
-		+ b"\xd8\x0c\x24"  # fmul dword ptr [esp]
-		+ b"\xd9\x1c\x24"  # fstp dword ptr [esp]
-		+ b"\x59\xc3"  # pop ecx; ret (F6 remains on the x87 stack)
-	)
-	if append_new[code_in_append : code_in_append + len(code)] != b"\x90" * len(code):
-		raise ValueError(f"B7 code cave is not empty in {source}")
-	modified_append = bytearray(append_new)
-	modified_append[code_in_append : code_in_append + len(code)] = code
-	runs[append_index] = (append_offset, append_old, bytes(modified_append))
-
-	b7_relative_call = b7_code_offset - (b7_load_offset + 5)
-	runs.insert(
-		append_index,
-		(
-			b7_load_offset,
-			B7_LOAD_AND_F6_STORE,
-			b"\xe8" + struct.pack("<i", b7_relative_call) + b"\x90" * 5,
-		),
-	)
-	runs.insert(
-		append_index,
-		(
-			cascade_process_count_offset,
-			CASCADE_PROCESS_COUNT_LOAD,
-			b"\xb8\x07\x00\x00\x00\x90",
-		),
-	)
 	_write_runs(destination, original_size, patched_size, runs)
 
 
@@ -443,9 +370,50 @@ def make_targeted_consonant_damping_patch(source: Path, destination: Path) -> No
 	_make_consonant_damping_patch(source, destination, SPLIT_FRICATION_FILTER_CODE)
 
 
-def make_all_consonant_damping_patch(source: Path, destination: Path) -> None:
-	"""Apply the established spectral pivot to direct and all six parallel paths."""
-	_make_consonant_damping_patch(source, destination, ALL_CONSONANT_FILTER_CODE)
+def make_sibilance_pitch_patch(
+	source: Path,
+	destination: Path,
+	semitones: float,
+) -> None:
+	"""Lower the native F5/F6 sibilance resonances without reshaping their signal."""
+	if semitones <= 0.0:
+		raise ValueError("Sibilance pitch shift must be greater than zero semitones")
+	frequency_ratio = 2.0 ** (-semitones / 12.0)
+	original_size, patched_size, runs = _read_runs(source.read_bytes())
+	count_runs = [run for run in runs if run[1] == b"\x8b\x85\x36\x0a" and run[2] == b"\xb8\x06\x00\x00"]
+	if len(count_runs) != 1:
+		raise ValueError(f"Could not uniquely locate formant-count instruction in {source}")
+	frequency_load_offset = count_runs[0][0] + SIBILANCE_FREQUENCY_LOAD_DELTA
+
+	xflt_runtime_offset = _xflt_runtime_offset(runs, source)
+	pitch_code_offset = xflt_runtime_offset + SIBILANCE_PITCH_CODE_OFFSET
+	append_indices = [i for i, (offset, old, _new) in enumerate(runs) if offset == original_size and not old]
+	if len(append_indices) != 1:
+		raise ValueError(f"Could not uniquely locate appended .xflt data in {source}")
+	append_index = append_indices[0]
+	append_offset, append_old, append_new = runs[append_index]
+	entry_in_append = append_new.find(XFLT_ENTRY)
+	if entry_in_append < 0 or append_new.find(XFLT_ENTRY, entry_in_append + 1) >= 0:
+		raise ValueError(f"Could not uniquely locate .xflt code in {source}")
+	code_in_append = entry_in_append + SIBILANCE_PITCH_CODE_OFFSET
+	code = bytearray(SIBILANCE_PITCH_CODE)
+	struct.pack_into("<f", code, SIBILANCE_PITCH_RATIO_OFFSET, frequency_ratio)
+	if append_new[code_in_append : code_in_append + len(code)] != b"\x90" * len(code):
+		raise ValueError(f"Sibilance-pitch code cave is not empty in {source}")
+	modified_append = bytearray(append_new)
+	modified_append[code_in_append : code_in_append + len(code)] = code
+	runs[append_index] = (append_offset, append_old, bytes(modified_append))
+
+	relative_call = pitch_code_offset - (frequency_load_offset + 5)
+	runs.insert(
+		append_index,
+		(
+			frequency_load_offset,
+			SIBILANCE_FREQUENCY_LOAD,
+			b"\xe8" + struct.pack("<i", relative_call) + b"\x90\x90",
+		),
+	)
+	_write_runs(destination, original_size, patched_size, runs)
 
 
 def main() -> None:
@@ -462,10 +430,9 @@ def main() -> None:
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fs"), False)
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fu"), True)
 		make_targeted_consonant_damping_patch(wide_b6, source.with_suffix(".p16st"))
-		make_all_consonant_damping_patch(wide_b6, source.with_suffix(".p16all"))
-		make_all_consonant_damping_patch(source.with_suffix(".p16b20"), source.with_suffix(".p16a6"))
-		make_seven_cascade_b7_patch(wide_b6, source.with_suffix(".p16c7"), 4.0)
-		make_all_consonant_damping_patch(source.with_suffix(".p16c7"), source.with_suffix(".p16a7"))
+		reference = source.with_suffix(".p16st")
+		for suffix, semitones in ((".p16s1", 1.0), (".p16s2", 2.0), (".p16s3", 3.0)):
+			make_sibilance_pitch_patch(reference, source.with_suffix(suffix), semitones)
 
 
 if __name__ == "__main__":

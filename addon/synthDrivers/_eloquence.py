@@ -39,10 +39,10 @@ HOST_EXIT_TIMEOUT = 3.0
 _ECI_BASE_RATE_MAP = {
 	0: 8000,
 	1: 11025,
-	2: 16000,  # v21 reference: native s/t/z
-	3: 16000,  # established pivot on all consonant branches
-	4: 16000,  # all consonants, stronger B6 presence
-	5: 16000,  # all consonants, wide seventh cascade
+	2: 16000,  # v21 reference
+	3: 16000,  # native v21 sibilance resonances down one semitone
+	4: 16000,  # native v21 sibilance resonances down two semitones
+	5: 16000,  # native v21 sibilance resonances down three semitones
 }
 _BANDWIDTH_SHELVES = {
 	2: ((3430.0, 8.0, 0.406),),
@@ -167,9 +167,9 @@ def _prepare_syn_engines(mode):
 	mode = _normalize_rate_mode(mode)
 	target_ext = {
 		2: ".p16st",
-		3: ".p16all",
-		4: ".p16a6",
-		5: ".p16a7",
+		3: ".p16s1",
+		4: ".p16s2",
+		5: ".p16s3",
 	}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
@@ -182,11 +182,10 @@ def _prepare_syn_engines(mode):
 			# Check derived variants before their base patches: a derived patch
 			# contains every run from .p16n and would otherwise be mistaken for it.
 			for ext in (
-				".p16a7",
-				".p16a6",
-				".p16all",
+				".p16s3",
+				".p16s2",
+				".p16s1",
 				".p16st",
-				".p16c7",
 				".p16fu",
 				".p16fs",
 				".p16c6",
@@ -222,9 +221,9 @@ def _prepare_syn_engines(mode):
 			LOGGER.exception("Could not switch %s SYN engine", stem)
 	labels = {
 		2: "v21 native 16 kHz reference",
-		3: "native 16 kHz with the pivot on all consonants",
-		4: "native 16 kHz with all-consonant pivot and stronger B6 presence",
-		5: "native 16 kHz with all-consonant pivot and wide seventh cascade",
+		3: "native 16 kHz with v21 sibilance resonances down one semitone",
+		4: "native 16 kHz with v21 sibilance resonances down two semitones",
+		5: "native 16 kHz with v21 sibilance resonances down three semitones",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 

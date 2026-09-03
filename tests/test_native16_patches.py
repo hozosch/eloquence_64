@@ -312,71 +312,88 @@ def test_split_frication_patches_use_real_direct_and_parallel_branches(tmp_path)
 		assert full_target == builder._xflt_runtime_offset(runs, committed) + 0x100
 
 
-def test_all_consonant_patches_filter_direct_and_all_six_parallel_branches(tmp_path):
+def test_sibilance_pitch_patches_shift_only_active_parallel_f5_f6(tmp_path):
 	builder = _load_patch_builder()
-	assert len(builder.ALL_CONSONANT_FILTER_CODE) == 476
-	variants = (
-		(".p16b40", ".p16all"),
-		(".p16b20", ".p16a6"),
-		(".p16c7", ".p16a7"),
-	)
-	for source_suffix, destination_suffix in variants:
-		for source in sorted(PATCH_DIR.glob(f"*{source_suffix}")):
-			generated = tmp_path / source.with_suffix(destination_suffix).name
-			builder.make_all_consonant_damping_patch(source, generated)
-			committed = source.with_suffix(destination_suffix)
+	assert len(builder.SIBILANCE_PITCH_CODE) == 47
+	assert builder.SIBILANCE_PITCH_CODE[builder.SIBILANCE_PITCH_RATIO_OFFSET - 1] == 0x68
+	assert struct.unpack_from(
+		"<f",
+		builder.SIBILANCE_PITCH_CODE,
+		builder.SIBILANCE_PITCH_RATIO_OFFSET,
+	)[0] == 1.0
+	variants = ((".p16s1", 1.0), (".p16s2", 2.0), (".p16s3", 3.0))
+	for reference in sorted(PATCH_DIR.glob("*.p16st")):
+		_original_size, _patched_size, reference_runs = builder._read_runs(reference.read_bytes())
+		for suffix, semitones in variants:
+			generated = tmp_path / reference.with_suffix(suffix).name
+			builder.make_sibilance_pitch_patch(reference, generated, semitones)
+			committed = reference.with_suffix(suffix)
 			assert generated.read_bytes() == committed.read_bytes()
 
 			original_size, _patched_size, runs = builder._read_runs(committed.read_bytes())
+			count_run = next(run for run in runs if run[1] == b"\x8b\x85\x36\x0a")
+			frequency_run = next(run for run in runs if run[1] == builder.SIBILANCE_FREQUENCY_LOAD)
+			assert frequency_run[0] == count_run[0] + builder.SIBILANCE_FREQUENCY_LOAD_DELTA
+			assert frequency_run[2][:1] == b"\xe8"
+			assert frequency_run[2][5:] == b"\x90\x90"
+
+			append = next(new for offset, old, new in runs if offset == original_size and not old)
+			reference_append = next(
+				new for offset, old, new in reference_runs if offset == original_size and not old
+			)
+			entry = append.index(builder.XFLT_ENTRY)
+			assert reference_append.index(builder.XFLT_ENTRY) == entry
+			code_offset = entry + builder.SIBILANCE_PITCH_CODE_OFFSET
+			expected_code = bytearray(builder.SIBILANCE_PITCH_CODE)
+			frequency_ratio = 2.0 ** (-semitones / 12.0)
+			struct.pack_into(
+				"<f",
+				expected_code,
+				builder.SIBILANCE_PITCH_RATIO_OFFSET,
+				frequency_ratio,
+			)
+			assert append[code_offset : code_offset + len(expected_code)] == expected_code
+			differences = {
+				i for i, pair in enumerate(zip(append, reference_append)) if pair[0] != pair[1]
+			}
+			assert differences == set(range(code_offset, code_offset + len(expected_code)))
+			assert [run for run in runs if run[0] != original_size and run is not frequency_run] == [
+				run for run in reference_runs if run[0] != original_size
+			]
+
+	# EBX offsets 10h/14h select F5/F6. Their exact unsmoothed target at
+	# E0h+EBX gates the shift; every other resonance takes the original load.
+	code = builder.SIBILANCE_PITCH_CODE
+	assert code.startswith(bytes.fromhex("83fb10740583fb14751d"))
+	assert bytes.fromhex("83bc1ce400000000") in code
+	assert code.count(bytes.fromhex("d9841ca4000000")) == 2
+
+
+def test_sibilance_pitch_patch_calls_reach_mapped_code_in_every_engine():
+	builder = _load_patch_builder()
+	syns = _bundled_syns()
+	assert len(syns) == 13
+	for syn in syns:
+		for suffix in (".p16s1", ".p16s2", ".p16s3"):
+			patch = syn.with_suffix(suffix)
+			original = bytearray(syn.read_bytes())
+			original_size, patched_size, runs = builder._read_runs(patch.read_bytes())
+			assert len(original) == original_size
+			patched = original + bytearray(patched_size - original_size)
+			for offset, old, new in runs:
+				assert patched[offset : offset + len(old)] == old, (syn.name, suffix, offset)
+				patched[offset : offset + len(new)] = new
+
 			append = next(new for offset, old, new in runs if offset == original_size and not old)
 			entry = append.index(builder.XFLT_ENTRY)
-			code_offset = entry + builder.SPLIT_FILTER_BLOCK_OFFSET
-			assert append[code_offset : code_offset + len(builder.ALL_CONSONANT_FILTER_CODE)] == (
-				builder.ALL_CONSONANT_FILTER_CODE
+			frequency_run = next(run for run in runs if run[1] == builder.SIBILANCE_FREQUENCY_LOAD)
+			source_rva = _pe_rva_for_raw_offset(patched, frequency_run[0])
+			actual_target_rva = source_rva + 5 + struct.unpack_from("<i", frequency_run[2], 1)[0]
+			expected_target_rva = _pe_rva_for_raw_offset(
+				patched,
+				original_size + entry + builder.SIBILANCE_PITCH_CODE_OFFSET,
 			)
-
-	code = builder.ALL_CONSONANT_FILTER_CODE
-	parallel_entry = builder.PARALLEL_FILTER_PROCESS_OFFSET - builder.SPLIT_FILTER_BLOCK_OFFSET
-	direct_code = code[:parallel_entry]
-	parallel_code = code[parallel_entry:]
-	# Reset two direct state words and six independent parallel state pairs.
-	assert bytes.fromhex("b90e000000f3ab") in direct_code
-	# No target-flag bypass remains in either path; stages 5 and 6 are selected.
-	assert bytes.fromhex("83bc240001000000") not in direct_code
-	assert bytes.fromhex("83bc240401000000") not in direct_code
-	assert bytes.fromhex("89d883e80d83f805") in parallel_code
-	assert bytes.fromhex("83baf400000000") not in parallel_code
-	assert bytes.fromhex("83baf800000000") not in parallel_code
-	assert all(struct.pack("<f", coefficient) in code for coefficient in builder.SPLIT_BAND_COEFFICIENTS)
-	assert struct.pack("<f", builder.DIRECT_PATH_GAIN) in code
-
-
-def test_wide_b7_patch_adds_only_a_seventh_voiced_cascade(tmp_path):
-	builder = _load_patch_builder()
-	for wide_b6 in sorted(PATCH_DIR.glob("*.p16b40")):
-		generated = tmp_path / wide_b6.with_suffix(".p16c7").name
-		builder.make_seven_cascade_b7_patch(wide_b6, generated, 4.0)
-		committed = wide_b6.with_suffix(".p16c7")
-		assert generated.read_bytes() == committed.read_bytes()
-
-		original_size, _patched_size, runs = builder._read_runs(committed.read_bytes())
-		count_run = next(run for run in runs if run[1] == b"\x8b\x85\x36\x0a")
-		assert count_run[2] == b"\xb8\x06\x00\x00"
-		b7_run = next(run for run in runs if run[1] == builder.B7_LOAD_AND_F6_STORE)
-		assert b7_run[0] == count_run[0] + 0x48C
-		assert b7_run[2][:1] == b"\xe8"
-		assert b7_run[2][5:] == b"\x90" * 5
-		cascade_run = next(run for run in runs if run[1] == builder.CASCADE_PROCESS_COUNT_LOAD)
-		assert cascade_run[0] == count_run[0] + 0x1A79
-		assert cascade_run[2] == b"\xb8\x07\x00\x00\x00\x90"
-
-		append = next(new for offset, old, new in runs if offset == original_size and not old)
-		entry = append.index(builder.XFLT_ENTRY)
-		helper_offset = entry + 0x80
-		assert append[helper_offset : helper_offset + 7] == bytes.fromhex("d99424d8000000")
-		assert append[helper_offset + 7] == 0x68
-		assert struct.unpack_from("<f", append, helper_offset + 8)[0] == 4.0
-		assert append[helper_offset + 12 : helper_offset + 17] == bytes.fromhex("d94760d80c")
+			assert actual_target_rva == expected_target_rva, (syn.name, suffix)
 
 
 def test_targeted_spectral_pivot_raises_lows_and_rolls_off_upper_frication():
@@ -516,31 +533,3 @@ def test_split_frication_patches_apply_with_mapped_targets_to_all_engines():
 			original_size + entry + builder.PARALLEL_FILTER_PROCESS_OFFSET,
 		)
 		assert parallel_target_rva == expected_parallel_rva, syn.name
-
-
-def test_experimental_consonant_patches_apply_to_all_engines():
-	builder = _load_patch_builder()
-	syns = _bundled_syns()
-	assert len(syns) == 13
-	for syn in syns:
-		for suffix in (".p16all", ".p16a6", ".p16c7", ".p16a7"):
-			patch = syn.with_suffix(suffix)
-			original = bytearray(syn.read_bytes())
-			original_size, patched_size, runs = builder._read_runs(patch.read_bytes())
-			assert len(original) == original_size
-			patched = original + bytearray(patched_size - original_size)
-			for offset, old, new in runs:
-				assert patched[offset : offset + len(old)] == old, (syn.name, suffix, offset)
-				patched[offset : offset + len(new)] = new
-
-			append = next(new for offset, old, new in runs if offset == original_size and not old)
-			entry = append.index(builder.XFLT_ENTRY)
-			if suffix in (".p16c7", ".p16a7"):
-				b7_run = next(run for run in runs if run[1] == builder.B7_LOAD_AND_F6_STORE)
-				source_rva = _pe_rva_for_raw_offset(patched, b7_run[0])
-				actual_target_rva = source_rva + 5 + struct.unpack_from("<i", b7_run[2], 1)[0]
-				expected_target_rva = _pe_rva_for_raw_offset(
-					patched,
-					original_size + entry + 0x80,
-				)
-				assert actual_target_rva == expected_target_rva, (syn.name, suffix)

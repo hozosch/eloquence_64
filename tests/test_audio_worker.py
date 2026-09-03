@@ -73,7 +73,7 @@ class FakeHostProcess:
 
 
 class SampleRateModeTests(unittest.TestCase):
-	def test_experiment_exposes_four_native_16_khz_modes(self):
+	def test_experiment_exposes_three_sibilance_pitch_comparisons(self):
 		module = _load_client_module()
 		self.assertEqual(
 			module._ECI_BASE_RATE_MAP,
@@ -81,7 +81,7 @@ class SampleRateModeTests(unittest.TestCase):
 		)
 		self.assertEqual(set(module._BANDWIDTH_SHELVES), {2, 3, 4, 5})
 
-	def test_current_experimental_modes_are_preserved_and_retired_modes_migrate(self):
+	def test_sibilance_pitch_modes_are_preserved_and_retired_modes_migrate(self):
 		module = _load_client_module()
 		for current_mode in range(2, 6):
 			with self.subTest(current_mode=current_mode):
