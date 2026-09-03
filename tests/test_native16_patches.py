@@ -312,67 +312,72 @@ def test_split_frication_patches_use_real_direct_and_parallel_branches(tmp_path)
 		assert full_target == builder._xflt_runtime_offset(runs, committed) + 0x100
 
 
-def test_sibilance_pitch_patches_shift_the_active_parallel_f3_f6_block(tmp_path):
+def test_sibilance_rolloff_patches_filter_only_the_hard_routed_high_stages(tmp_path):
 	builder = _load_patch_builder()
-	assert len(builder.SIBILANCE_PITCH_CODE) == 57
-	assert builder.SIBILANCE_PITCH_CODE[builder.SIBILANCE_PITCH_RATIO_OFFSET - 1] == 0x68
+	assert len(builder.SIBILANCE_ROLLOFF_FILTER_CODE) == 568
 	assert struct.unpack_from(
-		"<f",
-		builder.SIBILANCE_PITCH_CODE,
-		builder.SIBILANCE_PITCH_RATIO_OFFSET,
-	)[0] == 1.0
-	variants = ((".p16s1", 6.0), (".p16s2", 9.0), (".p16s3", 12.0))
+		"<5f",
+		builder.SIBILANCE_ROLLOFF_FILTER_CODE,
+		builder.SIBILANCE_FILTER_COEFFICIENT_OFFSET,
+	) == (1.0, 0.0, 0.0, 0.0, 0.0)
+	variants = (
+		(".p16s1", -6.0, 1.5),
+		(".p16s2", -10.0, 2.5),
+		(".p16s3", -14.0, 3.5),
+	)
 	for reference in sorted(PATCH_DIR.glob("*.p16st")):
 		_original_size, _patched_size, reference_runs = builder._read_runs(reference.read_bytes())
-		for suffix, semitones in variants:
+		for suffix, gain_db, makeup_db in variants:
 			generated = tmp_path / reference.with_suffix(suffix).name
-			builder.make_sibilance_pitch_patch(reference, generated, semitones)
+			builder.make_sibilance_rolloff_patch(reference, generated, gain_db, makeup_db)
 			committed = reference.with_suffix(suffix)
 			assert generated.read_bytes() == committed.read_bytes()
 
 			original_size, _patched_size, runs = builder._read_runs(committed.read_bytes())
-			count_run = next(run for run in runs if run[1] == b"\x8b\x85\x36\x0a")
-			frequency_run = next(run for run in runs if run[1] == builder.SIBILANCE_FREQUENCY_LOAD)
-			assert frequency_run[0] == count_run[0] + builder.SIBILANCE_FREQUENCY_LOAD_DELTA
-			assert frequency_run[2][:1] == b"\xe8"
-			assert frequency_run[2][5:] == b"\x90\x90"
-
 			append = next(new for offset, old, new in runs if offset == original_size and not old)
 			reference_append = next(
 				new for offset, old, new in reference_runs if offset == original_size and not old
 			)
 			entry = append.index(builder.XFLT_ENTRY)
 			assert reference_append.index(builder.XFLT_ENTRY) == entry
-			code_offset = entry + builder.SIBILANCE_PITCH_CODE_OFFSET
-			expected_code = bytearray(builder.SIBILANCE_PITCH_CODE)
-			frequency_ratio = 2.0 ** (-semitones / 12.0)
+			code_offset = entry + builder.SPLIT_FILTER_BLOCK_OFFSET
+			expected_code = bytearray(builder.SIBILANCE_ROLLOFF_FILTER_CODE)
+			coefficients = builder._sibilance_filter_coefficients(
+				builder.SIBILANCE_FILTER_FREQUENCY,
+				gain_db,
+				makeup_db,
+			)
 			struct.pack_into(
-				"<f",
+				"<5f",
 				expected_code,
-				builder.SIBILANCE_PITCH_RATIO_OFFSET,
-				frequency_ratio,
+				builder.SIBILANCE_FILTER_COEFFICIENT_OFFSET,
+				*coefficients,
 			)
 			assert append[code_offset : code_offset + len(expected_code)] == expected_code
 			differences = {
 				i for i, pair in enumerate(zip(append, reference_append)) if pair[0] != pair[1]
 			}
-			assert differences == set(range(code_offset, code_offset + len(expected_code)))
-			assert [run for run in runs if run[0] != original_size and run is not frequency_run] == [
+			assert differences
+			assert min(differences) >= code_offset
+			assert max(differences) < code_offset + len(expected_code)
+			assert [run for run in runs if run[0] != original_size] == [
 				run for run in reference_runs if run[0] != original_size
 			]
 
-	# EBX offsets 08h--14h select F3--F6. The exact F5/F6 target flags gate the
-	# complete block; lower resonances, vowels and inactive tails stay native.
-	code = builder.SIBILANCE_PITCH_CODE
-	assert code.startswith(bytes.fromhex("83fb08722c83fb147727"))
-	assert bytes.fromhex("83bc24f400000000750a83bc24f800000000") in code
-	assert code.count(bytes.fromhex("d9841ca4000000")) == 2
+	code = builder.SIBILANCE_ROLLOFF_FILTER_CODE
+	assert code.startswith(bytes.fromhex("89500c895010578db82c02000089d0b90e000000"))
+	assert bytes.fromhex("83baf400000000") in code
+	assert bytes.fromhex("83baf800000000") in code
+	assert bytes.fromhex("83f805") in code
 
 
-def test_sibilance_pitch_patch_calls_reach_mapped_code_in_every_engine():
+def test_sibilance_rolloff_code_stays_before_the_mapped_original_mixer():
 	builder = _load_patch_builder()
 	syns = _bundled_syns()
 	assert len(syns) == 13
+	assert len(builder.SIBILANCE_ROLLOFF_FILTER_CODE) <= (
+		builder.ORIGINAL_PARALLEL_MIXER_OFFSET - builder.SPLIT_FILTER_BLOCK_OFFSET
+	)
 	for syn in syns:
 		for suffix in (".p16s1", ".p16s2", ".p16s3"):
 			patch = syn.with_suffix(suffix)
@@ -386,14 +391,35 @@ def test_sibilance_pitch_patch_calls_reach_mapped_code_in_every_engine():
 
 			append = next(new for offset, old, new in runs if offset == original_size and not old)
 			entry = append.index(builder.XFLT_ENTRY)
-			frequency_run = next(run for run in runs if run[1] == builder.SIBILANCE_FREQUENCY_LOAD)
-			source_rva = _pe_rva_for_raw_offset(patched, frequency_run[0])
-			actual_target_rva = source_rva + 5 + struct.unpack_from("<i", frequency_run[2], 1)[0]
-			expected_target_rva = _pe_rva_for_raw_offset(
-				patched,
-				original_size + entry + builder.SIBILANCE_PITCH_CODE_OFFSET,
-			)
-			assert actual_target_rva == expected_target_rva, (syn.name, suffix)
+			code_offset = entry + builder.SPLIT_FILTER_BLOCK_OFFSET
+			code = append[code_offset : code_offset + len(builder.SIBILANCE_ROLLOFF_FILTER_CODE)]
+			popa_jump = code.rfind(b"\x61\xe9")
+			assert popa_jump >= 0, (syn.name, suffix)
+			jump = popa_jump + 1
+			jump_target = jump + 5 + struct.unpack_from("<i", code, jump + 1)[0]
+			assert jump_target == builder.ORIGINAL_PARALLEL_MIXER_OFFSET - (
+				builder.SPLIT_FILTER_BLOCK_OFFSET
+			), (syn.name, suffix)
+
+
+def test_sibilance_rolloff_preserves_lower_presence_and_reduces_only_the_top():
+	builder = _load_patch_builder()
+
+	def response_db(coefficients, frequency):
+		z = cmath.exp(-2j * math.pi * frequency / 16000)
+		b0, b1, b2, a1, a2 = coefficients
+		response = (b0 + b1 * z + b2 * z * z) / (1 + a1 * z + a2 * z * z)
+		return 20 * math.log10(abs(response))
+
+	for gain_db, makeup_db in ((-6.0, 1.5), (-10.0, 2.5), (-14.0, 3.5)):
+		coefficients = builder._sibilance_filter_coefficients(
+			builder.SIBILANCE_FILTER_FREQUENCY,
+			gain_db,
+			makeup_db,
+		)
+		assert abs(response_db(coefficients, 4000)) < 0.2
+		assert response_db(coefficients, 3000) > 1.0
+		assert abs(response_db(coefficients, 7500) - (gain_db + makeup_db)) < 0.1
 
 
 def test_targeted_spectral_pivot_raises_lows_and_rolls_off_upper_frication():

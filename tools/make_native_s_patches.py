@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import struct
 from pathlib import Path
 
@@ -15,7 +16,6 @@ TABLE_SUFFIX = bytes.fromhex(
 B6_LOAD = bytes.fromhex("d947548b4758")
 CASCADE_PROCESS_COUNT_LOAD = bytes.fromhex("8b864b180000")
 FRICATION_BUFFER_LOAD = bytes.fromhex("8b942408010000")
-SIBILANCE_FREQUENCY_LOAD = bytes.fromhex("d9841ca0000000")
 XFLT_ENTRY = bytes.fromhex("50e80000000058d98046000000")
 FRICATION_FILTER_CODE = bytes.fromhex(
 	"60e8000000005805ce01000083be5b18000000751231d2891089500489500889500c895010eb1d"
@@ -45,13 +45,22 @@ SPLIT_FRICATION_FILTER_CODE = bytes.fromhex(
 	"442404d91b83c3044975aa83c408eb0731d2891789570461e953010000906690ad58583f49c80c3fd122563ec26ccabe1a204c"
 	"3e18594b3f00000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
-SIBILANCE_PITCH_CODE = bytes.fromhex(
-	"83fb08722c83fb14772783bc24f400000000750a83bc24f8000000007413d9841ca4000000680000803fd80c2483c404"
-	"c3d9841ca4000000c3"
+SIBILANCE_ROLLOFF_FILTER_CODE = bytes.fromhex(
+	"89500c895010578db82c02000089d0b90e000000f3ab5fc32e8db42600000000d84c244052e8000000005a83bc240001"
+	"000000757283bc240401000000756883ec08d91c24d982aa010000d80c24d882d6010000d95c2404d982ae010000d80c"
+	"24d982b6010000d84c2404d9e0dec1d882da010000d99ad6010000d982b2010000d80c24d982ba010000d84c2404d9e0"
+	"dec1d99ada010000d9442404d88ad201000083c408eb0e31c08982d60100008982da0100005a83c40458c3eb432e8db4"
+	"26000000002e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db426000000002e8db4"
+	"26000000002e8db426000000008d760060e8000000005d89d883e80d83f8050f87b90000008b54240c83baf400000000"
+	"752983baf800000000752083f803770f8dbcc5020100008d95ce000000eb3383e8048dbcc522010000eb1e83f8037612"
+	"83e8048dbcc5220100008d95e2000000eb108dbcc50201000031c9890f894f04eb5c8b9ee31300008b8ef314000085c9"
+	"7e4c83ec08d903d91c24d902d80c24d807d95c2404d94204d80c24d9420cd84c2404d9e0dec1d84704d91fd94208d8"
+	"0c24d94210d84c2404d9e0dec1d95f04d9442404d91b83c3044975ba83c40861e92c010000ad58583f49c80c3fd12256"
+	"3ec26ccabe1a204c3e0000803f0000000000000000000000000000000018594b3f000000000000000000000000000000"
+	"0000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
-SIBILANCE_PITCH_RATIO_OFFSET = 0x26
-SIBILANCE_PITCH_CODE_OFFSET = 0x500
-SIBILANCE_FREQUENCY_LOAD_DELTA = 0x77C
+SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x1E8
+SIBILANCE_FILTER_FREQUENCY = 4800.0
 SPLIT_FILTER_BLOCK_OFFSET = 0x300
 DIRECT_FILTER_PROCESS_OFFSET = 0x320
 PARALLEL_FILTER_PROCESS_OFFSET = 0x400
@@ -72,6 +81,35 @@ SPLIT_BAND_COEFFICIENTS = (
 )
 DIRECT_PATH_GAIN = 0.7943282347242815
 SIBILANCE_TARGET_STACK_OFFSETS = (0xF0, 0xF4)
+
+
+def _sibilance_filter_coefficients(
+	frequency: float,
+	gain_db: float,
+	makeup_db: float,
+	sample_rate: float = 16000.0,
+) -> tuple[float, float, float, float, float]:
+	"""Return a high-shelf roll-off with makeup gain folded into its numerator."""
+	if not 0.0 < frequency < sample_rate / 2.0:
+		raise ValueError("sibilance filter frequency must be between DC and Nyquist")
+	if gain_db >= 0.0:
+		raise ValueError("sibilance filter gain must be negative")
+	if not 0.0 <= makeup_db < -gain_db:
+		raise ValueError("sibilance makeup must be nonnegative and smaller than the cut")
+
+	a = 10.0 ** (gain_db / 40.0)
+	w0 = 2.0 * math.pi * frequency / sample_rate
+	cos_w0 = math.cos(w0)
+	alpha = math.sin(w0) * math.sqrt(2.0) / 2.0
+	two_sqrt_a_alpha = 2.0 * math.sqrt(a) * alpha
+	a0 = (a + 1.0) - (a - 1.0) * cos_w0 + two_sqrt_a_alpha
+	makeup = 10.0 ** (makeup_db / 20.0)
+	b0 = makeup * a * ((a + 1.0) + (a - 1.0) * cos_w0 + two_sqrt_a_alpha) / a0
+	b1 = makeup * -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0) / a0
+	b2 = makeup * a * ((a + 1.0) + (a - 1.0) * cos_w0 - two_sqrt_a_alpha) / a0
+	a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0) / a0
+	a2 = ((a + 1.0) - (a - 1.0) * cos_w0 - two_sqrt_a_alpha) / a0
+	return b0, b1, b2, a1, a2
 
 
 def make_native_s_patch(source: Path, destination: Path) -> None:
@@ -371,23 +409,19 @@ def make_targeted_consonant_damping_patch(source: Path, destination: Path) -> No
 	_make_consonant_damping_patch(source, destination, SPLIT_FRICATION_FILTER_CODE)
 
 
-def make_sibilance_pitch_patch(
+def make_sibilance_rolloff_patch(
 	source: Path,
 	destination: Path,
-	semitones: float,
+	gain_db: float,
+	makeup_db: float,
 ) -> None:
-	"""Lower the native F3--F6 sibilance block without reshaping its signal."""
-	if semitones <= 0.0:
-		raise ValueError("Sibilance pitch shift must be greater than zero semitones")
-	frequency_ratio = 2.0 ** (-semitones / 12.0)
+	"""Filter only the hard-routed native s/t/z stages after their resonators."""
+	coefficients = _sibilance_filter_coefficients(
+		SIBILANCE_FILTER_FREQUENCY,
+		gain_db,
+		makeup_db,
+	)
 	original_size, patched_size, runs = _read_runs(source.read_bytes())
-	count_runs = [run for run in runs if run[1] == b"\x8b\x85\x36\x0a" and run[2] == b"\xb8\x06\x00\x00"]
-	if len(count_runs) != 1:
-		raise ValueError(f"Could not uniquely locate formant-count instruction in {source}")
-	frequency_load_offset = count_runs[0][0] + SIBILANCE_FREQUENCY_LOAD_DELTA
-
-	xflt_runtime_offset = _xflt_runtime_offset(runs, source)
-	pitch_code_offset = xflt_runtime_offset + SIBILANCE_PITCH_CODE_OFFSET
 	append_indices = [i for i, (offset, old, _new) in enumerate(runs) if offset == original_size and not old]
 	if len(append_indices) != 1:
 		raise ValueError(f"Could not uniquely locate appended .xflt data in {source}")
@@ -396,24 +430,21 @@ def make_sibilance_pitch_patch(
 	entry_in_append = append_new.find(XFLT_ENTRY)
 	if entry_in_append < 0 or append_new.find(XFLT_ENTRY, entry_in_append + 1) >= 0:
 		raise ValueError(f"Could not uniquely locate .xflt code in {source}")
-	code_in_append = entry_in_append + SIBILANCE_PITCH_CODE_OFFSET
-	code = bytearray(SIBILANCE_PITCH_CODE)
-	struct.pack_into("<f", code, SIBILANCE_PITCH_RATIO_OFFSET, frequency_ratio)
-	if append_new[code_in_append : code_in_append + len(code)] != b"\x90" * len(code):
-		raise ValueError(f"Sibilance-pitch code cave is not empty in {source}")
+	code_in_append = entry_in_append + SPLIT_FILTER_BLOCK_OFFSET
+	base_end = code_in_append + len(SPLIT_FRICATION_FILTER_CODE)
+	code_end = code_in_append + len(SIBILANCE_ROLLOFF_FILTER_CODE)
+	if append_new[code_in_append:base_end] != SPLIT_FRICATION_FILTER_CODE:
+		raise ValueError(f"Base split-frication code was not found in {source}")
+	if append_new[base_end:code_end] != b"\x90" * (code_end - base_end):
+		raise ValueError(f"Sibilance-filter extension overlaps nonempty code in {source}")
+	if len(SIBILANCE_ROLLOFF_FILTER_CODE) > ORIGINAL_PARALLEL_MIXER_OFFSET - SPLIT_FILTER_BLOCK_OFFSET:
+		raise ValueError("Sibilance filter overlaps the original parallel mixer")
+
+	code = bytearray(SIBILANCE_ROLLOFF_FILTER_CODE)
+	struct.pack_into("<5f", code, SIBILANCE_FILTER_COEFFICIENT_OFFSET, *coefficients)
 	modified_append = bytearray(append_new)
 	modified_append[code_in_append : code_in_append + len(code)] = code
 	runs[append_index] = (append_offset, append_old, bytes(modified_append))
-
-	relative_call = pitch_code_offset - (frequency_load_offset + 5)
-	runs.insert(
-		append_index,
-		(
-			frequency_load_offset,
-			SIBILANCE_FREQUENCY_LOAD,
-			b"\xe8" + struct.pack("<i", relative_call) + b"\x90\x90",
-		),
-	)
 	_write_runs(destination, original_size, patched_size, runs)
 
 
@@ -432,8 +463,12 @@ def main() -> None:
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fu"), True)
 		make_targeted_consonant_damping_patch(wide_b6, source.with_suffix(".p16st"))
 		reference = source.with_suffix(".p16st")
-		for suffix, semitones in ((".p16s1", 6.0), (".p16s2", 9.0), (".p16s3", 12.0)):
-			make_sibilance_pitch_patch(reference, source.with_suffix(suffix), semitones)
+		for suffix, gain_db, makeup_db in (
+			(".p16s1", -6.0, 1.5),
+			(".p16s2", -10.0, 2.5),
+			(".p16s3", -14.0, 3.5),
+		):
+			make_sibilance_rolloff_patch(reference, source.with_suffix(suffix), gain_db, makeup_db)
 
 
 if __name__ == "__main__":

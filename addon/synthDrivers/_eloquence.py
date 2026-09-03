@@ -41,10 +41,10 @@ _ECI_BASE_RATE_MAP = {
 	1: 11025,
 	2: 16000,  # v21 reference
 	3: 16000,  # measured upper-mid correction, native v21 sibilance
-	4: 16000,  # upper mids, native v21 sibilance block down six semitones
-	5: 16000,  # upper mids, native v21 sibilance block down nine semitones
-	21: 16000,  # upper mids, native v21 sibilance block down twelve semitones
-	22: 16000,  # nine-semitone control without the upper-mid correction
+	4: 16000,  # upper mids, mild native s/t/z roll-off
+	5: 16000,  # upper mids, medium native s/t/z roll-off
+	21: 16000,  # upper mids, strong native s/t/z roll-off
+	22: 16000,  # medium s/t/z roll-off without the upper-mid correction
 }
 _V21_BANDWIDTH_SHELF = ((3430.0, 8.0, 0.406),)
 # The equalized recording has a broad, sustained-energy plateau in the upper
@@ -238,10 +238,10 @@ def _prepare_syn_engines(mode):
 	labels = {
 		2: "v21 native 16 kHz reference",
 		3: "native 16 kHz with measured upper-mid correction",
-		4: "upper-mid correction and native sibilance block down six semitones",
-		5: "upper-mid correction and native sibilance block down nine semitones",
-		21: "upper-mid correction and native sibilance block down twelve semitones",
-		22: "native sibilance block down nine semitones without upper-mid correction",
+		4: "upper-mid correction and mild native sibilance roll-off",
+		5: "upper-mid correction and medium native sibilance roll-off",
+		21: "upper-mid correction and strong native sibilance roll-off",
+		22: "medium native sibilance roll-off without upper-mid correction",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
