@@ -60,6 +60,8 @@ SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x210
 VOICED_GAIN_OFFSET = 0x228
 VOICED_BUFFER_PROCESS_OFFSET = 0x270
 SIBILANCE_FILTER_FREQUENCY = 4800.0
+SIBILANCE_FILTER_GAIN_DB = -5.0
+SIBILANCE_FILTER_MAKEUP_DB = 1.25
 SPLIT_FILTER_BLOCK_OFFSET = 0x300
 DIRECT_FILTER_PROCESS_OFFSET = 0x320
 PARALLEL_FILTER_PROCESS_OFFSET = 0x400
@@ -501,19 +503,13 @@ def main() -> None:
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fu"), True)
 		make_targeted_consonant_damping_patch(wide_b6, source.with_suffix(".p16st"))
 		reference = source.with_suffix(".p16st")
-		for suffix, voiced_gain_db in (
-			(".p16s1", 0.0),
-			(".p16s2", -1.0),
-			(".p16s3", -2.0),
-			(".p16s4", 0.0),
-		):
+		for suffix in (".p16s1", ".p16s2", ".p16s3", ".p16s4"):
 			make_sibilance_rolloff_patch(
 				reference,
 				source.with_suffix(suffix),
-				-6.0,
-				1.5,
+				SIBILANCE_FILTER_GAIN_DB,
+				SIBILANCE_FILTER_MAKEUP_DB,
 				4.5,
-				voiced_gain_db,
 			)
 
 

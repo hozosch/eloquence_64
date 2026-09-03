@@ -73,7 +73,7 @@ class FakeHostProcess:
 
 
 class SampleRateModeTests(unittest.TestCase):
-	def test_experiment_layers_4khz_peak_on_v21_eq(self):
+	def test_experiment_compares_peak_widths_with_additive_low_bass(self):
 		module = _load_client_module()
 		self.assertEqual(
 			module._ECI_BASE_RATE_MAP,
@@ -93,10 +93,19 @@ class SampleRateModeTests(unittest.TestCase):
 		self.assertEqual(module._BANDWIDTH_SHELVES[3], module._UPPER_MID_BANDWIDTH_SHELF)
 		for mode in (4, 5, 21, 22):
 			self.assertEqual(module._BANDWIDTH_SHELVES[mode], module._V21_BANDWIDTH_SHELF)
-		self.assertEqual(set(module._BANDWIDTH_PEAKS), {4, 5, 21})
+		self.assertEqual(
+			module._BANDWIDTH_PEAKS,
+			{
+				4: module._FOUR_KHZ_PRESENCE_PEAK_Q15,
+				5: module._FOUR_KHZ_PRESENCE_PEAK_Q125,
+				21: module._FOUR_KHZ_PRESENCE_PEAK_Q10,
+				22: module._FOUR_KHZ_PRESENCE_PEAK_Q15,
+			},
+		)
+		self.assertEqual(set(module._BANDWIDTH_LOW_SHELVES), {4, 5, 21})
 		for mode in (4, 5, 21):
-			self.assertEqual(module._BANDWIDTH_PEAKS[mode], module._FOUR_KHZ_PRESENCE_PEAK)
-		self.assertNotIn(22, module._BANDWIDTH_PEAKS)
+			self.assertEqual(module._BANDWIDTH_LOW_SHELVES[mode], module._LOW_BASS_SHELF)
+		self.assertNotIn(22, module._BANDWIDTH_LOW_SHELVES)
 
 	def test_current_comparison_modes_are_preserved_and_retired_modes_migrate(self):
 		module = _load_client_module()
@@ -110,14 +119,14 @@ class SampleRateModeTests(unittest.TestCase):
 		self.assertEqual(module._normalize_rate_mode(1), 1)
 		self.assertEqual(module._normalize_rate_mode(23), 1)
 
-	def test_new_comparisons_chain_v21_eq_and_peak_while_control_uses_v21_only(self):
+	def test_new_comparisons_add_low_bass_without_replacing_existing_eq(self):
 		module = _load_client_module()
 		module._current_sample_rate_mode = 4
 		peak_worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
 		self.assertIsInstance(peak_worker._bandwidth_filter, module.FilterChain)
 		self.assertEqual(
 			[type(filt) for filt in peak_worker._bandwidth_filter._filters],
-			[module.CascadedHighShelfFilter, module.PeakingEQFilter],
+			[module.LowShelfFilter, module.CascadedHighShelfFilter, module.PeakingEQFilter],
 		)
 
 		module._current_sample_rate_mode = 22
@@ -125,7 +134,7 @@ class SampleRateModeTests(unittest.TestCase):
 		self.assertIsInstance(control_worker._bandwidth_filter, module.FilterChain)
 		self.assertEqual(
 			[type(filt) for filt in control_worker._bandwidth_filter._filters],
-			[module.CascadedHighShelfFilter],
+			[module.CascadedHighShelfFilter, module.PeakingEQFilter],
 		)
 
 

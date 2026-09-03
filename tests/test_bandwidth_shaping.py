@@ -80,6 +80,30 @@ class HighShelfFilterTests(unittest.TestCase):
 			shaping.HighShelfFilter(16000, 4800, 10.0, slope=0.0)
 
 
+class LowShelfFilterTests(unittest.TestCase):
+	def test_boosts_only_the_low_bass(self):
+		def gain_db(frequency):
+			data = _tone(frequency)
+			result = shaping.LowShelfFilter(16000, 220.0, 2.0, 1.0).process(data)
+			return 20.0 * math.log10(_rms(result) / _rms(data))
+
+		self.assertAlmostEqual(gain_db(80), 2.0, delta=0.1)
+		self.assertAlmostEqual(gain_db(220), 1.0, delta=0.1)
+		self.assertLess(gain_db(500), 0.1)
+		self.assertLess(gain_db(4000), 0.01)
+
+	def test_chunk_boundaries_preserve_filter_state(self):
+		data = _tone(100, length=4000)
+		whole = shaping.LowShelfFilter(16000, 220.0, 2.0, 1.0).process(data)
+		chunked_filter = shaping.LowShelfFilter(16000, 220.0, 2.0, 1.0)
+		chunked = chunked_filter.process(data[:3000]) + chunked_filter.process(data[3000:])
+		self.assertEqual(whole, chunked)
+
+	def test_rejects_nonpositive_slope(self):
+		with self.assertRaises(ValueError):
+			shaping.LowShelfFilter(16000, 220.0, 2.0, 0.0)
+
+
 class PeakingEQFilterTests(unittest.TestCase):
 	def test_boost_is_centered_at_four_khz_without_raising_the_top(self):
 		def gain_db(frequency):
@@ -90,6 +114,15 @@ class PeakingEQFilterTests(unittest.TestCase):
 		self.assertAlmostEqual(gain_db(4000), 8.0, delta=0.15)
 		self.assertAlmostEqual(gain_db(3000), 3.2, delta=0.15)
 		self.assertLess(gain_db(7000), 0.2)
+
+	def test_comparison_q_values_progressively_widen_the_peak(self):
+		data = _tone(3000)
+		gains = []
+		for quality in (1.5, 1.25, 1.0):
+			result = shaping.PeakingEQFilter(16000, 4000.0, 8.0, quality).process(data)
+			gains.append(20.0 * math.log10(_rms(result) / _rms(data)))
+		self.assertGreater(gains[1], gains[0] + 0.5)
+		self.assertGreater(gains[2], gains[1] + 0.5)
 
 	def test_chunk_boundaries_preserve_filter_state(self):
 		data = _tone(4000, length=4000)
@@ -131,6 +164,24 @@ class PeakingEQFilterTests(unittest.TestCase):
 		self.assertAlmostEqual(gain_db(2000), 3.0, delta=0.15)
 		self.assertAlmostEqual(gain_db(4000), 12.7, delta=0.15)
 		self.assertAlmostEqual(gain_db(7000), 7.85, delta=0.15)
+
+	def test_low_bass_stage_does_not_replace_or_shift_the_existing_eq(self):
+		def gain_db(frequency, include_bass):
+			data = _tone(frequency)
+			filters = []
+			if include_bass:
+				filters.append(shaping.LowShelfFilter(16000, 220.0, 2.0, 1.0))
+			filters.extend(
+				(
+					shaping.CascadedHighShelfFilter(16000, ((3430.0, 8.0, 0.406),)),
+					shaping.PeakingEQFilter(16000, 4000.0, 8.0, 1.5),
+				),
+			)
+			result = shaping.FilterChain(filters).process(data)
+			return 20.0 * math.log10(_rms(result) / _rms(data))
+
+		self.assertAlmostEqual(gain_db(80, True) - gain_db(80, False), 2.0, delta=0.1)
+		self.assertAlmostEqual(gain_db(4000, True), gain_db(4000, False), delta=0.01)
 
 
 class CascadedHighShelfFilterTests(unittest.TestCase):
