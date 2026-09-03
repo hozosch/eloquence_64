@@ -137,6 +137,35 @@ class SampleRateModeTests(unittest.TestCase):
 			[module.CascadedHighShelfFilter, module.PeakingEQFilter],
 		)
 
+	def test_presence_contour_toggle_waits_for_next_speech_block(self):
+		module = _load_client_module()
+		module._current_sample_rate_mode = 4
+		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
+		self.assertIsInstance(worker._bandwidth_filter._filters[-1], module.PeakingEQFilter)
+
+		module.set_presence_contour(False)
+		# Do not alter an in-flight block and create a discontinuity.
+		self.assertIsInstance(worker._bandwidth_filter._filters[-1], module.PeakingEQFilter)
+		worker._start_filter_sequence(1)
+		self.assertEqual(
+			[type(filt) for filt in worker._bandwidth_filter._filters],
+			[module.LowShelfFilter, module.CascadedHighShelfFilter],
+		)
+
+		module.set_presence_contour(True)
+		worker._start_filter_sequence(2)
+		self.assertEqual(
+			[type(filt) for filt in worker._bandwidth_filter._filters],
+			[module.LowShelfFilter, module.CascadedHighShelfFilter, module.PeakingEQFilter],
+		)
+
+	def test_presence_contour_has_no_effect_on_original_rates(self):
+		module = _load_client_module()
+		module._current_sample_rate_mode = 1
+		module.set_presence_contour(False)
+		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
+		self.assertIsNone(worker._bandwidth_filter)
+
 
 class WarmEngineReloadTests(unittest.TestCase):
 	def test_unload_engine_keeps_supported_host(self):

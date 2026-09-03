@@ -83,6 +83,7 @@ _BANDWIDTH_LOW_SHELVES = {
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
+_presence_contour_enabled = True
 _ECI_SAMPLE_RATE_PARAM = 5
 
 _RATE_MARKER_PATH = os.path.join(os.path.dirname(__file__), "eloquence", "nativeRateMode.txt")
@@ -268,6 +269,17 @@ def get_sample_rate() -> int:
 	return _current_sample_rate_mode
 
 
+def get_presence_contour() -> bool:
+	return _presence_contour_enabled
+
+
+def set_presence_contour(enabled) -> None:
+	"""Enable the optional 4 kHz contour at the next speech-block boundary."""
+	global _presence_contour_enabled
+	_presence_contour_enabled = bool(enabled)
+	LOGGER.info("Eloquence 16 kHz presence contour %s", "enabled" if enabled else "disabled")
+
+
 def set_sample_rate(mode) -> None:
 	"""Select an original-rate engine or one of the native 16 kHz comparisons."""
 	global _current_sample_rate_mode, _current_variant
@@ -299,7 +311,13 @@ class AudioWorker(threading.Thread):
 		self._running = True
 		self._stopping = False
 		self._player_lock = threading.RLock()
-		mode = get_sample_rate()
+		self._filter_mode = get_sample_rate()
+		self._presence_contour_enabled = get_presence_contour()
+		self._bandwidth_filter = self._make_bandwidth_filter()
+		self._filter_sequence: Optional[int] = None
+
+	def _make_bandwidth_filter(self):
+		mode = self._filter_mode
 		curve = _BANDWIDTH_SHELVES.get(mode)
 		peak = _BANDWIDTH_PEAKS.get(mode)
 		low_shelf = _BANDWIDTH_LOW_SHELVES.get(mode)
@@ -308,10 +326,19 @@ class AudioWorker(threading.Thread):
 			filters.append(LowShelfFilter(_ECI_BASE_RATE_MAP[mode], *low_shelf))
 		if curve is not None:
 			filters.append(CascadedHighShelfFilter(_ECI_BASE_RATE_MAP[mode], curve))
-		if peak is not None:
+		if self._presence_contour_enabled and peak is not None:
 			filters.append(PeakingEQFilter(_ECI_BASE_RATE_MAP[mode], *peak))
-		self._bandwidth_filter = FilterChain(filters) if filters else None
-		self._filter_sequence: Optional[int] = None
+		return FilterChain(filters) if filters else None
+
+	def _start_filter_sequence(self, seq: int) -> None:
+		"""Apply option changes only between speech blocks to prevent clicks."""
+		presence_contour_enabled = get_presence_contour()
+		if presence_contour_enabled != self._presence_contour_enabled:
+			self._presence_contour_enabled = presence_contour_enabled
+			self._bandwidth_filter = self._make_bandwidth_filter()
+		elif self._bandwidth_filter:
+			self._bandwidth_filter.reset()
+		self._filter_sequence = seq
 
 	def run(self) -> None:
 		pending_audio: Optional[AudioChunk] = None
@@ -323,9 +350,8 @@ class AudioWorker(threading.Thread):
 			if chunk is None:
 				break
 			data, index, is_final, seq = chunk
-			if self._bandwidth_filter and seq != self._filter_sequence:
-				self._bandwidth_filter.reset()
-				self._filter_sequence = seq
+			if seq != self._filter_sequence:
+				self._start_filter_sequence(seq)
 			if pending_audio and pending_audio[3] < self._client._sequence:
 				pending_audio = None
 			if seq < self._client._sequence:

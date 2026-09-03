@@ -720,6 +720,13 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 			False,
 		),
 
+		# Translators: A synth setting that enables the optional 4 kHz contour in 16 kHz modes
+		BooleanDriverSetting(
+			"presenceContour",
+			_("Enable &presence contour (16 kHz only)"),
+			True,
+		),
+
 		# Translators: A synth setting available in speech settings dialog
 		DriverSetting(
 			"pauseMode",
@@ -1090,6 +1097,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 	_backquoteVoiceTags = False
 	_ABRDICT = False
 	_phrasePrediction = False
+	_presenceContour = True
 
 	def _get_backquoteVoiceTags(self):
 		return self._backquoteVoiceTags
@@ -1114,6 +1122,13 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		if enable == self._phrasePrediction:
 			return
 		self._phrasePrediction = enable
+
+	def _get_presenceContour(self):
+		return self._presenceContour
+
+	def _set_presenceContour(self, enable):
+		self._presenceContour = bool(enable)
+		_eloquence.set_presence_contour(self._presenceContour)
 
 	def _get_rate(self):
 		return self._paramToPercent(self.getVParam(_eloquence.rate), minRate, maxRate)
