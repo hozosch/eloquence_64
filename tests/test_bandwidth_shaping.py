@@ -84,23 +84,53 @@ class PeakingEQFilterTests(unittest.TestCase):
 	def test_boost_is_centered_at_four_khz_without_raising_the_top(self):
 		def gain_db(frequency):
 			data = _tone(frequency)
-			result = shaping.PeakingEQFilter(16000, 4000.0, 8.0, 2.0).process(data)
+			result = shaping.PeakingEQFilter(16000, 4000.0, 8.0, 1.5).process(data)
 			return 20.0 * math.log10(_rms(result) / _rms(data))
 
 		self.assertAlmostEqual(gain_db(4000), 8.0, delta=0.15)
-		self.assertAlmostEqual(gain_db(3000), 2.23, delta=0.15)
+		self.assertAlmostEqual(gain_db(3000), 3.2, delta=0.15)
 		self.assertLess(gain_db(7000), 0.2)
 
 	def test_chunk_boundaries_preserve_filter_state(self):
 		data = _tone(4000, length=4000)
-		whole = shaping.PeakingEQFilter(16000, 4000.0, 8.0, 2.0).process(data)
-		chunked_filter = shaping.PeakingEQFilter(16000, 4000.0, 8.0, 2.0)
+		whole = shaping.PeakingEQFilter(16000, 4000.0, 8.0, 1.5).process(data)
+		chunked_filter = shaping.PeakingEQFilter(16000, 4000.0, 8.0, 1.5)
 		chunked = chunked_filter.process(data[:3000]) + chunked_filter.process(data[3000:])
 		self.assertEqual(whole, chunked)
 
 	def test_rejects_nonpositive_quality(self):
 		with self.assertRaises(ValueError):
 			shaping.PeakingEQFilter(16000, 4000.0, 8.0, 0.0)
+
+	def test_filter_chain_preserves_state_across_chunks(self):
+		data = _tone(4000, length=4000)
+		stages = (
+			shaping.HighShelfFilter(16000, 3430.0, 8.0, 0.406),
+			shaping.PeakingEQFilter(16000, 4000.0, 8.0, 1.5),
+		)
+		whole = shaping.FilterChain(stages).process(data)
+		chunked_stages = (
+			shaping.HighShelfFilter(16000, 3430.0, 8.0, 0.406),
+			shaping.PeakingEQFilter(16000, 4000.0, 8.0, 1.5),
+		)
+		chain = shaping.FilterChain(chunked_stages)
+		chunked = chain.process(data[:3000]) + chain.process(data[3000:])
+		self.assertEqual(whole, chunked)
+
+	def test_v21_reference_and_peak_are_both_present_in_combined_curve(self):
+		def gain_db(frequency):
+			data = _tone(frequency)
+			chain = shaping.FilterChain(
+				(
+					shaping.CascadedHighShelfFilter(16000, ((3430.0, 8.0, 0.406),)),
+					shaping.PeakingEQFilter(16000, 4000.0, 8.0, 1.5),
+				),
+			)
+			return 20.0 * math.log10(_rms(chain.process(data)) / _rms(data))
+
+		self.assertAlmostEqual(gain_db(2000), 3.0, delta=0.15)
+		self.assertAlmostEqual(gain_db(4000), 12.7, delta=0.15)
+		self.assertAlmostEqual(gain_db(7000), 7.85, delta=0.15)
 
 
 class CascadedHighShelfFilterTests(unittest.TestCase):

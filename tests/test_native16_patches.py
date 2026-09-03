@@ -316,7 +316,7 @@ def test_split_frication_patches_use_real_direct_and_parallel_branches(tmp_path)
 		assert full_target == builder._xflt_runtime_offset(runs, committed) + 0x100
 
 
-def test_sibilance_rolloff_patches_use_hard_voicing_split_and_compare_b6_widths(tmp_path):
+def test_sibilance_rolloff_patches_keep_hard_split_and_compare_final_voiced_gain(tmp_path):
 	builder = _load_patch_builder()
 	assert len(builder.SIBILANCE_ROLLOFF_FILTER_CODE) == 704
 	assert struct.unpack_from(
@@ -329,17 +329,18 @@ def test_sibilance_rolloff_patches_use_hard_voicing_split_and_compare_b6_widths(
 		builder.SIBILANCE_ROLLOFF_FILTER_CODE,
 		builder.VOICED_GAIN_OFFSET,
 	) == (1.0,)
-	variants = ((".p16s1", 4.5), (".p16s2", 5.0), (".p16s3", 6.0), (".p16s4", 4.5))
+	variants = ((".p16s1", 0.0), (".p16s2", -1.0), (".p16s3", -2.0), (".p16s4", 0.0))
 	for reference in sorted(PATCH_DIR.glob("*.p16st")):
 		_original_size, _patched_size, reference_runs = builder._read_runs(reference.read_bytes())
-		for suffix, b6_multiplier in variants:
+		for suffix, voiced_gain_db in variants:
 			generated = tmp_path / reference.with_suffix(suffix).name
 			builder.make_sibilance_rolloff_patch(
 				reference,
 				generated,
 				-6.0,
 				1.5,
-				b6_multiplier,
+				4.5,
+				voiced_gain_db,
 			)
 			committed = reference.with_suffix(suffix)
 			assert generated.read_bytes() == committed.read_bytes()
@@ -354,7 +355,7 @@ def test_sibilance_rolloff_patches_use_hard_voicing_split_and_compare_b6_widths(
 			b6_multiplier_offset = (
 				entry + builder.B6_CODE_OFFSET + builder.B6_MULTIPLIER_OFFSET
 			)
-			assert struct.unpack_from("<f", append, b6_multiplier_offset)[0] == b6_multiplier
+			assert struct.unpack_from("<f", append, b6_multiplier_offset)[0] == 4.5
 			code_offset = entry + builder.SPLIT_FILTER_BLOCK_OFFSET
 			expected_code = bytearray(builder.SIBILANCE_ROLLOFF_FILTER_CODE)
 			coefficients = builder._sibilance_filter_coefficients(
@@ -372,12 +373,26 @@ def test_sibilance_rolloff_patches_use_hard_voicing_split_and_compare_b6_widths(
 				"<f",
 				expected_code,
 				builder.VOICED_GAIN_OFFSET,
-				1.0,
+				10.0 ** (voiced_gain_db / 20.0),
 			)
 			assert append[code_offset : code_offset + len(expected_code)] == expected_code
 
 			final_runs = [run for run in runs if run[1] == builder.FINAL_BUFFER_COUNT_LOAD]
-			assert final_runs == []
+			if voiced_gain_db < 0.0:
+				assert len(final_runs) == 1
+				final_offset, _final_old, final_new = final_runs[0]
+				count_run = next(run for run in runs if run[1] == b"\x8b\x85\x36\x0a")
+				assert final_offset == count_run[0] + builder.FINAL_VOICED_HOOK_DELTA
+				assert final_new[:1] == b"\xe8"
+				assert final_new[-1:] == b"\x90"
+				call_target = final_offset + 5 + struct.unpack_from("<i", final_new, 1)[0]
+				assert call_target == (
+					builder._xflt_runtime_offset(runs, committed)
+					+ builder.SPLIT_FILTER_BLOCK_OFFSET
+					+ builder.VOICED_BUFFER_PROCESS_OFFSET
+				)
+			else:
+				assert final_runs == []
 			differences = {
 				i for i, pair in enumerate(zip(append, reference_append)) if pair[0] != pair[1]
 			}

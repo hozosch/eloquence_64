@@ -422,7 +422,7 @@ def make_sibilance_rolloff_patch(
 	b6_multiplier: float,
 	voiced_gain_db: float = 0.0,
 ) -> None:
-	"""Build a hard native-voiced-s split and B6-width comparison."""
+	"""Build a hard native-voiced-s split with B6 and final voiced-level controls."""
 	if b6_multiplier < BASE_B6_MULTIPLIER:
 		raise ValueError("Comparison B6 multiplier must not be narrower than its base")
 	if voiced_gain_db > 0.0:
@@ -501,18 +501,19 @@ def main() -> None:
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fu"), True)
 		make_targeted_consonant_damping_patch(wide_b6, source.with_suffix(".p16st"))
 		reference = source.with_suffix(".p16st")
-		for suffix, b6_multiplier in (
-			(".p16s1", 4.5),
-			(".p16s2", 5.0),
-			(".p16s3", 6.0),
-			(".p16s4", 4.5),
+		for suffix, voiced_gain_db in (
+			(".p16s1", 0.0),
+			(".p16s2", -1.0),
+			(".p16s3", -2.0),
+			(".p16s4", 0.0),
 		):
 			make_sibilance_rolloff_patch(
 				reference,
 				source.with_suffix(suffix),
 				-6.0,
 				1.5,
-				b6_multiplier,
+				4.5,
+				voiced_gain_db,
 			)
 
 

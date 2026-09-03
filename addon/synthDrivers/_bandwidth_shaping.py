@@ -93,6 +93,22 @@ class PeakingEQFilter:
 		return samples.tobytes()
 
 
+class FilterChain:
+	"""Run several stateful PCM filters as one resettable filter."""
+
+	def __init__(self, filters: Sequence[object]) -> None:
+		self._filters = tuple(filters)
+
+	def reset(self) -> None:
+		for filt in self._filters:
+			filt.reset()
+
+	def process(self, data: bytes) -> bytes:
+		for filt in self._filters:
+			data = filt.process(data)
+		return data
+
+
 class CascadedHighShelfFilter:
 	"""Apply several shelves as one continuous comparison curve."""
 
