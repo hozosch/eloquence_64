@@ -187,8 +187,15 @@ class ConfigureLoggingTruncationTests(unittest.TestCase):
 
 			# Reconfigure — should truncate
 			host.configure_logging(log_dir)
-			# The file should now be empty (no errors logged yet at level ERROR)
-			self.assertEqual(os.path.getsize(log_path), 0)
+			try:
+				# The file should now be empty (no errors logged yet at level ERROR)
+				self.assertEqual(os.path.getsize(log_path), 0)
+			finally:
+				# Windows will not remove the temporary directory while the test's
+				# FileHandler still has the log file open.
+				for handler in logging.getLogger().handlers:
+					handler.close()
+				logging.getLogger().handlers.clear()
 
 	def test_log_file_without_dir(self):
 		# Must not crash when log_dir is None
