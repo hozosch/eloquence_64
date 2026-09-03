@@ -46,9 +46,10 @@ SPLIT_FRICATION_FILTER_CODE = bytes.fromhex(
 	"3e18594b3f00000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
 SIBILANCE_PITCH_CODE = bytes.fromhex(
-	"83fb10740583fb14751d83bc1ce4000000007413d9841ca4000000680000803fd80c2483c404c3d9841ca4000000c3"
+	"83fb08722c83fb14772783bc24f400000000750a83bc24f8000000007413d9841ca4000000680000803fd80c2483c404"
+	"c3d9841ca4000000c3"
 )
-SIBILANCE_PITCH_RATIO_OFFSET = 0x1C
+SIBILANCE_PITCH_RATIO_OFFSET = 0x26
 SIBILANCE_PITCH_CODE_OFFSET = 0x500
 SIBILANCE_FREQUENCY_LOAD_DELTA = 0x77C
 SPLIT_FILTER_BLOCK_OFFSET = 0x300
@@ -375,7 +376,7 @@ def make_sibilance_pitch_patch(
 	destination: Path,
 	semitones: float,
 ) -> None:
-	"""Lower the native F5/F6 sibilance resonances without reshaping their signal."""
+	"""Lower the native F3--F6 sibilance block without reshaping its signal."""
 	if semitones <= 0.0:
 		raise ValueError("Sibilance pitch shift must be greater than zero semitones")
 	frequency_ratio = 2.0 ** (-semitones / 12.0)
@@ -431,7 +432,7 @@ def main() -> None:
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fu"), True)
 		make_targeted_consonant_damping_patch(wide_b6, source.with_suffix(".p16st"))
 		reference = source.with_suffix(".p16st")
-		for suffix, semitones in ((".p16s1", 5.0), (".p16s2", 7.0), (".p16s3", 9.0)):
+		for suffix, semitones in ((".p16s1", 6.0), (".p16s2", 9.0), (".p16s3", 12.0)):
 			make_sibilance_pitch_patch(reference, source.with_suffix(suffix), semitones)
 
 

@@ -312,16 +312,16 @@ def test_split_frication_patches_use_real_direct_and_parallel_branches(tmp_path)
 		assert full_target == builder._xflt_runtime_offset(runs, committed) + 0x100
 
 
-def test_sibilance_pitch_patches_shift_only_active_parallel_f5_f6(tmp_path):
+def test_sibilance_pitch_patches_shift_the_active_parallel_f3_f6_block(tmp_path):
 	builder = _load_patch_builder()
-	assert len(builder.SIBILANCE_PITCH_CODE) == 47
+	assert len(builder.SIBILANCE_PITCH_CODE) == 57
 	assert builder.SIBILANCE_PITCH_CODE[builder.SIBILANCE_PITCH_RATIO_OFFSET - 1] == 0x68
 	assert struct.unpack_from(
 		"<f",
 		builder.SIBILANCE_PITCH_CODE,
 		builder.SIBILANCE_PITCH_RATIO_OFFSET,
 	)[0] == 1.0
-	variants = ((".p16s1", 5.0), (".p16s2", 7.0), (".p16s3", 9.0))
+	variants = ((".p16s1", 6.0), (".p16s2", 9.0), (".p16s3", 12.0))
 	for reference in sorted(PATCH_DIR.glob("*.p16st")):
 		_original_size, _patched_size, reference_runs = builder._read_runs(reference.read_bytes())
 		for suffix, semitones in variants:
@@ -361,11 +361,11 @@ def test_sibilance_pitch_patches_shift_only_active_parallel_f5_f6(tmp_path):
 				run for run in reference_runs if run[0] != original_size
 			]
 
-	# EBX offsets 10h/14h select F5/F6. Their exact unsmoothed target at
-	# E0h+EBX gates the shift; every other resonance takes the original load.
+	# EBX offsets 08h--14h select F3--F6. The exact F5/F6 target flags gate the
+	# complete block; lower resonances, vowels and inactive tails stay native.
 	code = builder.SIBILANCE_PITCH_CODE
-	assert code.startswith(bytes.fromhex("83fb10740583fb14751d"))
-	assert bytes.fromhex("83bc1ce400000000") in code
+	assert code.startswith(bytes.fromhex("83fb08722c83fb147727"))
+	assert bytes.fromhex("83bc24f400000000750a83bc24f800000000") in code
 	assert code.count(bytes.fromhex("d9841ca4000000")) == 2
 
 

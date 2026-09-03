@@ -41,20 +41,20 @@ _ECI_BASE_RATE_MAP = {
 	1: 11025,
 	2: 16000,  # v21 reference
 	3: 16000,  # measured upper-mid correction, native v21 sibilance
-	4: 16000,  # upper mids, native v21 sibilance resonances down five semitones
-	5: 16000,  # upper mids, native v21 sibilance resonances down seven semitones
-	21: 16000,  # upper mids, native v21 sibilance resonances down nine semitones
-	22: 16000,  # seven-semitone control without the upper-mid correction
+	4: 16000,  # upper mids, native v21 sibilance block down six semitones
+	5: 16000,  # upper mids, native v21 sibilance block down nine semitones
+	21: 16000,  # upper mids, native v21 sibilance block down twelve semitones
+	22: 16000,  # nine-semitone control without the upper-mid correction
 }
 _V21_BANDWIDTH_SHELF = ((3430.0, 8.0, 0.406),)
 # The equalized recording has a broad, sustained-energy plateau in the upper
 # mids, but its overall gain and consonant band must not be copied.  Two
-# opposing shelves add about 2.8 dB from 1.5 to 2.5 kHz, then converge back to
-# 0 dB above 6 kHz.  Cascading this static window with the v21 shelf therefore
-# adds body without another time-varying consonant detector or more HF gain.
+# opposing shelves add about 2.8 dB from 3 to 5 kHz, then converge back to
+# 0 dB at the 8 kHz edge. Cascading this static window with the v21 shelf
+# therefore adds presence without another time-varying consonant detector.
 _UPPER_MID_BANDWIDTH_SHELF = _V21_BANDWIDTH_SHELF + (
-	(900.0, 3.0, 1.0),
-	(3800.0, -3.0, 1.0),
+	(1800.0, 3.0, 1.0),
+	(6000.0, -3.0, 1.0),
 )
 _BANDWIDTH_SHELVES = {
 	2: _V21_BANDWIDTH_SHELF,
@@ -238,10 +238,10 @@ def _prepare_syn_engines(mode):
 	labels = {
 		2: "v21 native 16 kHz reference",
 		3: "native 16 kHz with measured upper-mid correction",
-		4: "upper-mid correction and v21 sibilance resonances down five semitones",
-		5: "upper-mid correction and v21 sibilance resonances down seven semitones",
-		21: "upper-mid correction and v21 sibilance resonances down nine semitones",
-		22: "v21 sibilance resonances down seven semitones without upper-mid correction",
+		4: "upper-mid correction and native sibilance block down six semitones",
+		5: "upper-mid correction and native sibilance block down nine semitones",
+		21: "upper-mid correction and native sibilance block down twelve semitones",
+		22: "native sibilance block down nine semitones without upper-mid correction",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 

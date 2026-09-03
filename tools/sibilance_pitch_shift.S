@@ -5,19 +5,24 @@
 
 	/* Replaces `flds 0xa0(%esp,%ebx)` in the native resonator-coefficient
 	 * setup loop. The CALL return address shifts the original frame by four
-	 * bytes. EBX is a byte offset: 0x10 and 0x14 select parallel F5 and F6. */
+	 * bytes. EBX is a byte offset: 0x08 through 0x14 select parallel F3--F6. */
 loadShiftedSibilanceFrequency:
-	cmpl $0x10, %ebx
-	je .Lcandidate
+	cmpl $0x08, %ebx
+	jb .Loriginal
 	cmpl $0x14, %ebx
-	jne .Loriginal
+	ja .Loriginal
 
-.Lcandidate:
-	/* The unsmoothed target amplitude for the matching resonator is at E0h in
-	 * the original frame. A zero target leaves vowels and inactive tails at the
-	 * exact v21 frequency; the engine performs its own coefficient smoothing. */
-	cmpl $0, 0xe4(%esp,%ebx)
+	/* The outer frame's exact F5/F6 target flags are at F0h/F4h. They move to
+	 * F4h/F8h here because of the CALL return address. If either is active, this
+	 * is the native s/t/z resonator block: shift F3--F6 together rather than
+	 * moving only two weak upper resonances. Vowels and inactive tails keep the
+	 * exact v21 frequencies. */
+	cmpl $0, 0xf4(%esp)
+	jne .Lshift
+	cmpl $0, 0xf8(%esp)
 	je .Loriginal
+
+.Lshift:
 	flds 0xa4(%esp,%ebx)
 
 	/* The patch generator replaces this 1.0f immediate with the requested
