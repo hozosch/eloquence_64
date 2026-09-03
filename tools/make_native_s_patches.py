@@ -32,6 +32,39 @@ FRICATION_FILTER_CODE = bytes.fromhex(
 	"00000000000000000000000000000000000000"
 )
 FRICATION_FILTER_MODE_OFFSET = 50
+SPLIT_FRICATION_FILTER_CODE = bytes.fromhex(
+	"89500c895010578db81002000089d0b90b000000f3ab5fc32e8db42600000000d84c244052e8000000005a8b86ee05000025"
+	"ffffff7f75208b863e06000025ffffff7f75138b82e201000085c07415488982e2010000eb74c782e201000030000000eb68"
+	"83ec08d91c24d982a2010000d80c24d882ba010000d95c2404d982a6010000d80c24d982ae010000d84c2404d9e0dec1d882"
+	"be010000d99aba010000d982aa010000d80c24d982b2010000d84c2404d9e0dec1d99abe010000d9442404d88ab601000083"
+	"c408eb0e31c08982ba0100008982be0100005a83c40458c3eb1e2e8db426000000002e8db426000000002e8db42600000000"
+	"8db60000000060e8000000005d89d883e80d83f8030f87af0000008dbcc5e60000008b96ee05000081e2ffffff7f75198b96"
+	"3e06000081e2ffffff7f750b83bd0601000000757ceb0cc7850601000030000000eb6e8b9ee31300008b8ef314000085c97e"
+	"6583ec08d903d91c24d985c6000000d80c24d807d95c2404d985ca000000d80c24d985d2000000d84c2404d9e0dec1d84704"
+	"d91fd985ce000000d80c24d985d6000000d84c2404d9e0dec1d95f04d9442404d91b83c3044975aa83c408eb0731d2891789"
+	"570461e9360100009090ad58583f49c80c3fd122563ec26ccabe1a204c3e18594b3f00000000000000000000000000000000"
+	"00000000000000000000000000000000000000000000000000000000"
+)
+SPLIT_FILTER_BLOCK_OFFSET = 0x300
+DIRECT_FILTER_PROCESS_OFFSET = 0x320
+PARALLEL_FILTER_PROCESS_OFFSET = 0x400
+ORIGINAL_PARALLEL_MIXER_OFFSET = 0x600
+DIRECT_TAIL_OFFSET = 0x3F
+DIRECT_TAIL = bytes.fromhex("d84c243c58")
+PARALLEL_MIXER_RUN_DELTA = 0x1EC1
+FRICATION_PROCESS_CALL_OFFSET = 0x3C
+FRICATION_PROCESS_OFFSET = 0x150
+FRICATION_INACTIVE_TAIL_OFFSET = 0x1F
+FRICATION_INACTIVE_TAIL = bytes.fromhex("89500c895010eb1d")
+SPLIT_BAND_COEFFICIENTS = (
+	0.8451030710061816,
+	0.5499311376530391,
+	0.20911718551258923,
+	-0.39536100764539944,
+	0.199341207209701,
+)
+DIRECT_PATH_GAIN = 0.7943282347242815
+SIBILANCE_STAGE_GAIN_OFFSETS = (0x5EE, 0x63E)
 
 
 def make_native_s_patch(source: Path, destination: Path) -> None:
@@ -137,6 +170,27 @@ def _write_runs(
 	destination.write_bytes(data)
 
 
+def _xflt_runtime_offset(runs: list[tuple[int, bytes, bytes]], source: Path) -> int:
+	"""Return the appended section's call coordinate in the original code section.
+
+	PE raw offsets and runtime RVAs do not have the same delta in every Eloquence
+	module. The established native-16 entry hook already contains the correct
+	runtime-relative displacement, so derive all later hook targets from it.
+	"""
+	xflt_hooks = [
+		run
+		for run in runs
+		if len(run[1]) == 6
+		and run[1] != B6_LOAD
+		and run[2][:1] == b"\xe8"
+		and run[2][5:] == b"\x90"
+	]
+	if len(xflt_hooks) != 1:
+		raise ValueError(f"Could not uniquely locate .xflt entry hook in {source}")
+	hook_offset, _hook_old, hook_new = xflt_hooks[0]
+	return hook_offset + 5 + struct.unpack_from("<i", hook_new, 1)[0]
+
+
 def make_b6_bandwidth_patch(source: Path, destination: Path, multiplier: float) -> None:
 	"""Widen only the sixth cascade formant inside the native Klatt engine."""
 	if multiplier <= 1.0:
@@ -151,11 +205,7 @@ def make_b6_bandwidth_patch(source: Path, destination: Path, multiplier: float) 
 
 	# The first existing hook enters the appended .xflt section.  Deriving its
 	# target from the relative call keeps this independent of each SYN's size.
-	xflt_hooks = [run for run in runs if len(run[1]) == 6 and run[2][:1] == b"\xe8" and run[2][5:] == b"\x90"]
-	if len(xflt_hooks) != 1:
-		raise ValueError(f"Could not uniquely locate .xflt entry hook in {source}")
-	hook_offset, _hook_old, hook_new = xflt_hooks[0]
-	xflt_entry_offset = hook_offset + 5 + struct.unpack_from("<i", hook_new, 1)[0]
+	xflt_entry_offset = _xflt_runtime_offset(runs, source)
 	b6_code_offset = xflt_entry_offset + 0x60
 
 	append_indices = [i for i, (offset, old, _new) in enumerate(runs) if offset == original_size and not old]
@@ -202,7 +252,7 @@ def make_native_frication_patch(source: Path, destination: Path, full_treatment:
 	entry_in_append = append_new.find(XFLT_ENTRY)
 	if entry_in_append < 0 or append_new.find(XFLT_ENTRY, entry_in_append + 1) >= 0:
 		raise ValueError(f"Could not uniquely locate .xflt code in {source}")
-	filter_code_offset = original_size + entry_in_append + 0x100
+	filter_code_offset = _xflt_runtime_offset(runs, source) + 0x100
 	code_in_append = entry_in_append + 0x100
 	code = bytearray(FRICATION_FILTER_CODE)
 	code[FRICATION_FILTER_MODE_OFFSET] = int(full_treatment)
@@ -220,6 +270,101 @@ def make_native_frication_patch(source: Path, destination: Path, full_treatment:
 	_write_runs(destination, original_size, patched_size, runs)
 
 
+def make_targeted_consonant_damping_patch(source: Path, destination: Path) -> None:
+	"""Split post-Mode-19 frication processing at the engine's real branches.
+
+	The direct f/w/b/p output gets the spectral pivot plus 2 dB attenuation.
+	Parallel stages 1--4 get the same pivot for ch/sch. Dedicated sibilance stage
+	5 or 6 refreshes a bounded hard native hold; this keeps /s/, /z/ and /t/
+	native across brief internal stage holes without capturing the next filtered
+	consonant for the rest of the complete frication event.
+	Stages 5--6 themselves always reach the original mixer unchanged.
+	"""
+	original_size, patched_size, runs = _read_runs(source.read_bytes())
+	count_runs = [run for run in runs if run[1] == b"\x8b\x85\x36\x0a" and run[2] == b"\xb8\x06\x00\x00"]
+	if len(count_runs) != 1:
+		raise ValueError(f"Could not uniquely locate formant-count instruction in {source}")
+	xflt_runtime_offset = _xflt_runtime_offset(runs, source)
+
+	append_indices = [i for i, (offset, old, _new) in enumerate(runs) if offset == original_size and not old]
+	if len(append_indices) != 1:
+		raise ValueError(f"Could not uniquely locate appended .xflt data in {source}")
+	append_index = append_indices[0]
+	append_offset, append_old, append_new = runs[append_index]
+	entry_in_append = append_new.find(XFLT_ENTRY)
+	if entry_in_append < 0 or append_new.find(XFLT_ENTRY, entry_in_append + 1) >= 0:
+		raise ValueError(f"Could not uniquely locate .xflt code in {source}")
+	filter_in_append = entry_in_append + 0x100
+	code_in_append = entry_in_append + SPLIT_FILTER_BLOCK_OFFSET
+	for offset, code, label in (
+		(filter_in_append, FRICATION_FILTER_CODE, "frication-filter"),
+		(code_in_append, SPLIT_FRICATION_FILTER_CODE, "split-frication-filter"),
+	):
+		if append_new[offset : offset + len(code)] != b"\x90" * len(code):
+			raise ValueError(f"{label} code cave is not empty in {source}")
+
+	parallel_mixer_offset = count_runs[0][0] + PARALLEL_MIXER_RUN_DELTA
+	parallel_mixer_indices = [
+		i
+		for i, (offset, _old, new) in enumerate(runs)
+		if offset == parallel_mixer_offset and new[:1] == b"\xe8"
+	]
+	if len(parallel_mixer_indices) != 1:
+		raise ValueError(f"Could not uniquely locate parallel mixer hook in {source}")
+	parallel_mixer_index = parallel_mixer_indices[0]
+	parallel_offset, parallel_old, parallel_new = runs[parallel_mixer_index]
+	parallel_target = parallel_offset + 5 + struct.unpack_from("<i", parallel_new, 1)[0]
+	if parallel_target != xflt_runtime_offset + ORIGINAL_PARALLEL_MIXER_OFFSET:
+		raise ValueError(f"Parallel mixer hook has an unexpected target in {source}")
+
+	modified_append = bytearray(append_new)
+	full_treatment_code = bytearray(FRICATION_FILTER_CODE)
+	full_treatment_code[FRICATION_FILTER_MODE_OFFSET] = 1
+	process_call = FRICATION_PROCESS_CALL_OFFSET
+	if full_treatment_code[process_call] != 0xE8:
+		raise ValueError(f"Established frication process call not found in {source}")
+	process_target = 0x100 + process_call + 5 + struct.unpack_from("<i", full_treatment_code, process_call + 1)[0]
+	if process_target != FRICATION_PROCESS_OFFSET:
+		raise ValueError(f"Established frication process call has an unexpected target in {source}")
+	inactive_tail = FRICATION_INACTIVE_TAIL_OFFSET
+	if full_treatment_code[inactive_tail : inactive_tail + len(FRICATION_INACTIVE_TAIL)] != (
+		FRICATION_INACTIVE_TAIL
+	):
+		raise ValueError(f"Established inactive-state reset not found in {source}")
+	reset_call_offset = 0x100 + inactive_tail
+	reset_relative_call = SPLIT_FILTER_BLOCK_OFFSET - (reset_call_offset + 5)
+	full_treatment_code[inactive_tail : inactive_tail + len(FRICATION_INACTIVE_TAIL)] = (
+		b"\xe8" + struct.pack("<i", reset_relative_call) + b"\xeb\x1e\x90"
+	)
+	modified_append[filter_in_append : filter_in_append + len(full_treatment_code)] = full_treatment_code
+
+	direct_tail_in_append = entry_in_append + DIRECT_TAIL_OFFSET
+	if modified_append[direct_tail_in_append : direct_tail_in_append + len(DIRECT_TAIL)] != DIRECT_TAIL:
+		raise ValueError(f"Direct-frication tail not found in {source}")
+	direct_relative_call = DIRECT_FILTER_PROCESS_OFFSET - (DIRECT_TAIL_OFFSET + 5)
+	modified_append[direct_tail_in_append : direct_tail_in_append + len(DIRECT_TAIL)] = (
+		b"\xe8" + struct.pack("<i", direct_relative_call)
+	)
+	modified_append[code_in_append : code_in_append + len(SPLIT_FRICATION_FILTER_CODE)] = (
+		SPLIT_FRICATION_FILTER_CODE
+	)
+	runs[append_index] = (append_offset, append_old, bytes(modified_append))
+
+	modified_parallel = bytearray(parallel_new)
+	parallel_relative_call = xflt_runtime_offset + PARALLEL_FILTER_PROCESS_OFFSET - (parallel_offset + 5)
+	struct.pack_into("<i", modified_parallel, 1, parallel_relative_call)
+	runs[parallel_mixer_index] = (parallel_offset, parallel_old, bytes(modified_parallel))
+
+	full_hook_offset = count_runs[0][0] + 0x1D90
+	full_hook_target = xflt_runtime_offset + 0x100
+	full_relative_call = full_hook_target - (full_hook_offset + 5)
+	runs.insert(
+		append_index,
+		(full_hook_offset, FRICATION_BUFFER_LOAD, b"\xe8" + struct.pack("<i", full_relative_call) + b"\x90\x90"),
+	)
+	_write_runs(destination, original_size, patched_size, runs)
+
+
 def main() -> None:
 	for source in sorted(PATCH_DIR.glob("*.p16")):
 		native_s = source.with_suffix(".p16n")
@@ -233,6 +378,7 @@ def main() -> None:
 		wide_b6 = source.with_suffix(".p16b40")
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fs"), False)
 		make_native_frication_patch(wide_b6, source.with_suffix(".p16fu"), True)
+		make_targeted_consonant_damping_patch(wide_b6, source.with_suffix(".p16st"))
 
 
 if __name__ == "__main__":

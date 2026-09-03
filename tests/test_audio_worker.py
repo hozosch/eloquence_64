@@ -3,6 +3,7 @@ import queue
 import sys
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -13,11 +14,15 @@ def _load_client_module():
 	nvwave_module.WavePlayer = object
 	build_version_module = types.ModuleType("buildVersion")
 	build_version_module.version_year = 2026
+	ipc_module = types.ModuleType("addon.synthDrivers._eloquence_ipc")
+	job_module = types.ModuleType("addon.synthDrivers._eloquence_job")
 
 	stubs = {
 		"config": config_module,
 		"nvwave": nvwave_module,
 		"buildVersion": build_version_module,
+		"addon.synthDrivers._eloquence_ipc": ipc_module,
+		"addon.synthDrivers._eloquence_job": job_module,
 	}
 	previous = {name: sys.modules.get(name) for name in stubs}
 	sys.modules.update(stubs)
@@ -60,6 +65,33 @@ class FakePlayer:
 
 class FakeClient:
 	_sequence = 0
+
+
+class FakeHostProcess:
+	def poll(self):
+		return None
+
+
+class WarmEngineReloadTests(unittest.TestCase):
+	def test_unload_engine_keeps_supported_host(self):
+		module = _load_client_module()
+		client = module.EloquenceHostClient()
+		client._host = types.SimpleNamespace(process=FakeHostProcess())
+		client.close_audio = mock.Mock()
+		client.send_command = mock.Mock(return_value={"status": "ok"})
+
+		self.assertTrue(client.unload_engine())
+		client.close_audio.assert_called_once_with()
+		client.send_command.assert_called_once_with("unload")
+
+	def test_unload_engine_rejects_legacy_host(self):
+		module = _load_client_module()
+		client = module.EloquenceHostClient()
+		client._host = types.SimpleNamespace(process=FakeHostProcess())
+		client.close_audio = mock.Mock()
+		client.send_command = mock.Mock(side_effect=RuntimeError("unknownCommand"))
+
+		self.assertFalse(client.unload_engine())
 
 
 class AudioWorkerTests(unittest.TestCase):

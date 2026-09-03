@@ -1,6 +1,7 @@
 # Build customizations
 # Change this file instead of SConstruct or manifest files, whenever possible.
 
+import os
 import subprocess
 
 
@@ -28,7 +29,7 @@ addon_info = {
 	"addon_name": "Eloquence",
 	"addon_summary": "Eloquence Synthesizer",
 	"addon_description": "Eloquence synthesizer for NVDA with 64-bit and native 16 kHz support",
-	"addon_version": _get_version(),
+	"addon_version": os.environ.get("ELOQUENCE_ADDON_VERSION", _get_version()),
 	"addon_author": "NVDA User",
 	"addon_url": "https://github.com/hozosch/eloquence_64",
 	"addon_lastTestedNVDAVersion": "2034.1",

@@ -14,6 +14,7 @@ controller process as part of the `initialize` command.
 from __future__ import annotations
 
 import argparse
+import _ctypes
 import logging
 import os
 import pickle
@@ -407,7 +408,7 @@ class EloquenceRuntime:
 		self._speaking = False
 		self._send_event("stopped")
 
-	def delete(self) -> None:
+	def delete(self, unload_library: bool = False) -> None:
 		# LOGGER.debug("Deleting Eloquence handle")
 		if self._handle:
 			if self._dll:
@@ -421,6 +422,23 @@ class EloquenceRuntime:
 			self._dictionary_handle = None
 			self._dll.eciDelete(self._handle)
 			self._handle = None
+		if unload_library and self._dll:
+			# A native-rate switch replaces the mapped SYN modules on disk. Drop
+			# the ECI DLL from this process as well as deleting its engine handle so
+			# Windows releases those mappings before the controller patches them.
+			# Keeping the Python helper and its pipe alive avoids PyInstaller/Python
+			# startup on every switch.
+			dll_handle = getattr(self._dll, "_handle", None)
+			self._dll = None
+			if dll_handle:
+				_ctypes.FreeLibrary(dll_handle)
+			# Only acknowledge the warm path when Windows confirms that neither
+			# ECI nor any language module is still mapped. Otherwise the client must
+			# use its full-process fallback before modifying the files.
+			module_names = (os.path.basename(self._config.eci_path), *(f"{code}.syn" for code in LANGS))
+			still_loaded = [name for name in module_names if ctypes.windll.kernel32.GetModuleHandleW(name)]
+			if still_loaded:
+				raise RuntimeError("ECI modules remain loaded: " + ", ".join(still_loaded))
 
 	def set_param(self, param_id: int, value: int) -> None:
 		# LOGGER.debug("Setting param %s=%s", param_id, value)
@@ -518,6 +536,7 @@ class HostController:
 		self._should_exit = False
 		self._handlers = {
 			"initialize": self._handle_initialize,
+			"unload": self._handle_unload,
 			"addText": self._handle_add_text,
 			"insertIndex": self._handle_insert_index,
 			"synthesize": self._handle_synthesize,
@@ -569,6 +588,11 @@ class HostController:
 	# ------------------------------------------------------------------
 	# Command handlers
 	def _handle_initialize(self, **payload):
+		if self._runtime:
+			# Defensive cleanup for a repeated initialize command. Normal warm
+			# reloads explicitly unload first so the SYN files can be changed in
+			# between the two commands.
+			self._runtime.delete(unload_library=True)
 		config = HostConfig(
 			eci_path=payload["eciPath"],
 			data_directory=payload["dataDirectory"],
@@ -580,6 +604,13 @@ class HostController:
 		self._runtime = EloquenceRuntime(self._conn, config)
 		self._runtime.start()
 		return self._runtime.get_state()
+
+	def _handle_unload(self):
+		"""Unload ECI while keeping the helper process and Host Channel alive."""
+		if self._runtime:
+			self._runtime.delete(unload_library=True)
+			self._runtime = None
+		return {"status": "ok"}
 
 	def _handle_add_text(self, text: bytes):
 		self._runtime.add_text(text)
@@ -599,7 +630,8 @@ class HostController:
 
 	def _handle_delete(self):
 		if self._runtime:
-			self._runtime.delete()
+			self._runtime.delete(unload_library=True)
+			self._runtime = None
 		self._should_exit = True
 		return {"status": "ok"}
 

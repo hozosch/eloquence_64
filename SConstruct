@@ -32,14 +32,17 @@ for po in poFiles:
 # --- Validate required binaries and native-16 patches ----------------------
 
 eci_dir = addonDir / "synthDrivers" / "eloquence"
-host_exe = addonDir / "synthDrivers" / "eloquence_host32.exe"
+host_exes = (
+	addonDir / "synthDrivers" / "eloquence_host32" / "eloquence_host32.exe",
+	addonDir / "synthDrivers" / "eloquence_host32.exe",
+)
 voice_names = ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB")
 patch_names = ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB", "chs", "jpn", "kor")
 required_proprietary = [eci_dir / "ECI.DLL"] + [eci_dir / f"{name}.SYN" for name in voice_names]
 required_patches = [
 	eci_dir / f"{name}{extension}"
 	for name in patch_names
-	for extension in (".p16", ".p16n", ".p16b5")
+	for extension in (".p16", ".p16n", ".p16b5", ".p16st")
 ]
 
 missing = [str(p) for p in required_proprietary if not p.exists()]
@@ -61,9 +64,10 @@ if missing_patches:
 	)
 	Exit(1)
 
-if not host_exe.exists():
+if not any(host_exe.exists() for host_exe in host_exes):
 	print(
-		f"ERROR: {host_exe} not found.\nRun `build_host.cmd` to compile the 32-bit host executable first.",
+		"ERROR: No 32-bit Eloquence host found.\n"
+		"Run `build_host.cmd` to compile the host directory first.",
 		file=sys.stderr,
 	)
 	Exit(1)

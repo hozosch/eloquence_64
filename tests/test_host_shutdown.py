@@ -5,6 +5,7 @@ import logging
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 # host_eloquence32.py uses ctypes.WINFUNCTYPE at module load time, which only
 # exists on Windows.  Provide a stub so the module imports on non-Windows CI.
@@ -145,6 +146,20 @@ class ServeForeverErrorSendGuardTests(unittest.TestCase):
 		error_responses = [m for m in conn.sent if "error" in m]
 		self.assertEqual(len(error_responses), 1)
 		self.assertEqual(error_responses[0]["error"], "unknownCommand")
+
+
+class WarmEngineReloadTests(unittest.TestCase):
+	def test_unload_releases_runtime_without_exiting_helper(self):
+		controller = host.HostController(RecordingConnection())  # type: ignore[arg-type]
+		runtime = mock.Mock()
+		controller._runtime = runtime
+
+		result = controller._handle_unload()
+
+		runtime.delete.assert_called_once_with(unload_library=True)
+		self.assertIsNone(controller._runtime)
+		self.assertFalse(controller._should_exit)
+		self.assertEqual(result, {"status": "ok"})
 
 
 class ConfigureLoggingTruncationTests(unittest.TestCase):

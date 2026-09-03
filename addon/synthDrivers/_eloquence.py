@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import itertools
 import logging
 import os
@@ -42,11 +43,13 @@ _ECI_BASE_RATE_MAP = {
 	3: 16000,  # selected baseline: native s, measured balance, 4x B6
 	18: 16000,  # baseline plus adaptive smoothing of native frication
 	19: 16000,  # baseline plus the former upsampler treatment on native frication
+	20: 16000,  # Mode 19 plus bounded hard direct/parallel frication routing
 }
 _BANDWIDTH_SHELVES = {
 	3: ((3430.0, 8.0, 0.406),),
 	18: ((3430.0, 8.0, 0.406),),
 	19: ((3430.0, 8.0, 0.406),),
+	20: ((3430.0, 8.0, 0.406),),
 }
 _current_sample_rate_mode = 1
 _current_variant = 0
@@ -89,6 +92,7 @@ def persist_rate_mode(mode):
 
 _ENGINE_VARIANTS = ("chs", "DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "jpn", "kor", "PTB")
 
+@functools.lru_cache(maxsize=256)
 def _load_p16_patch(path):
 	with open(path, "rb") as f:
 		data = f.read()
@@ -108,10 +112,10 @@ def _load_p16_patch(path):
 	return orig_size, new_size, runs
 
 
-def _apply_p16(path, patch_path, enable):
+def _apply_p16_to_data(data, patch_path, enable):
+	"""Return *data* with one reversible P16 patch applied or removed."""
 	orig_size, new_size, runs = _load_p16_patch(patch_path)
-	with open(path, "rb") as f:
-		data = bytearray(f.read())
+	data = bytearray(data)
 	want_size = new_size if enable else orig_size
 	if enable and len(data) < new_size:
 		data.extend(b"\0" * (new_size - len(data)))
@@ -127,17 +131,19 @@ def _apply_p16(path, patch_path, enable):
 		del data[want_size:]
 	elif len(data) < want_size:
 		data.extend(b"\0" * (want_size - len(data)))
+	return bytes(data)
+
+
+def _apply_p16(path, patch_path, enable):
+	with open(path, "rb") as f:
+		data = f.read()
+	data = _apply_p16_to_data(data, patch_path, enable)
 	with open(path, "wb") as f:
 		f.write(data)
 
 
-def _p16_matches(path, patch_path, enabled):
+def _p16_matches_data(data, patch_path, enabled):
 	orig_size, new_size, runs = _load_p16_patch(patch_path)
-	try:
-		with open(path, "rb") as f:
-			data = f.read()
-	except Exception:
-		return False
 	want_size = new_size if enabled else orig_size
 	if len(data) != want_size:
 		return False
@@ -146,6 +152,15 @@ def _p16_matches(path, patch_path, enabled):
 		if b and data[off:off + len(b)] != b:
 			return False
 	return True
+
+
+def _p16_matches(path, patch_path, enabled):
+	try:
+		with open(path, "rb") as f:
+			data = f.read()
+	except Exception:
+		return False
+	return _p16_matches_data(data, patch_path, enabled)
 
 
 def _prepare_syn_engines(mode):
@@ -157,6 +172,7 @@ def _prepare_syn_engines(mode):
 		3: ".p16b40",
 		18: ".p16fs",
 		19: ".p16fu",
+		20: ".p16st",
 	}.get(mode)
 	for stem in _ENGINE_VARIANTS:
 		candidates = (stem + ".SYN", stem.lower() + ".syn", stem.upper() + ".SYN")
@@ -169,6 +185,7 @@ def _prepare_syn_engines(mode):
 			# Check derived variants before their base patches: a derived patch
 			# contains every run from .p16n and would otherwise be mistaken for it.
 			for ext in (
+				".p16st",
 				".p16fu",
 				".p16fs",
 				".p16c6",
@@ -183,13 +200,23 @@ def _prepare_syn_engines(mode):
 			if os.path.exists(os.path.join(base, stem + ext))
 		]
 		try:
+			# The old implementation reopened and reread the complete SYN module
+			# once for every possible patch variant.  Keep the bytes in memory so
+			# startup and native-rate changes need one read and at most one write
+			# per language module instead.
+			with open(dst, "rb") as f:
+				original_data = f.read()
+			data = original_data
 			# Revert whichever compact native variant is currently active.
 			for pp in patches:
-				if _p16_matches(dst, pp, True):
-					_apply_p16(dst, pp, False)
+				if _p16_matches_data(data, pp, True):
+					data = _apply_p16_to_data(data, pp, False)
 					break
 			if target_ext:
-				_apply_p16(dst, os.path.join(base, stem + target_ext), True)
+				data = _apply_p16_to_data(data, os.path.join(base, stem + target_ext), True)
+			if data != original_data:
+				with open(dst, "wb") as f:
+					f.write(data)
 		except Exception:
 			LOGGER.exception("Could not switch %s SYN engine", stem)
 	labels = {
@@ -197,6 +224,7 @@ def _prepare_syn_engines(mode):
 		3: "native 16 kHz baseline with native s, measured balance, and 4x B6",
 		18: "native 16 kHz baseline with adaptive frication smoothing",
 		19: "native 16 kHz baseline with former upsampler treatment on frication",
+		20: "native 16 kHz with bounded hard frication paths and native s/t/z",
 	}
 	LOGGER.info("Prepared Eloquence SYN engines for %s", labels.get(mode, "original 8/11 kHz"))
 
@@ -470,9 +498,16 @@ class EloquenceHostClient:
 		override = os.environ.get("ELOQUENCE_HOST_COMMAND")
 		if override:
 			return shlex.split(override)
-		exe_path = os.path.join(addon_dir, HOST_EXECUTABLE)
-		if os.path.exists(exe_path):
-			return [exe_path]
+		# Prefer PyInstaller's directly runnable onedir layout.  Unlike the legacy
+		# onefile helper it does not unpack a private Python runtime on every host
+		# restart, which materially shortens native-rate changes.
+		host_candidates = (
+			os.path.join(addon_dir, "eloquence_host32", HOST_EXECUTABLE),
+			os.path.join(addon_dir, HOST_EXECUTABLE),
+		)
+		for exe_path in host_candidates:
+			if os.path.exists(exe_path):
+				return [exe_path]
 		script_path = os.path.join(addon_dir, HOST_SCRIPT)
 		if os.path.exists(script_path):
 			raise RuntimeError(
@@ -525,6 +560,22 @@ class EloquenceHostClient:
 			except Exception:
 				LOGGER.exception("WavePlayer close failed")
 			self._player = None
+
+	def unload_engine(self) -> bool:
+		"""Unload ECI but retain the helper process for a fast SYN variant switch.
+
+		Older bundled helpers do not implement this command. Returning ``False``
+		lets the caller transparently use the proven full-process restart instead.
+		"""
+		if not self._host:
+			return False
+		self.close_audio()
+		try:
+			response = self.send_command("unload")
+		except Exception:
+			LOGGER.info("Warm Eloquence engine reload is unavailable", exc_info=True)
+			return False
+		return response.get("status") == "ok" and self._host.process.poll() is None
 
 	# ------------------------------------------------------------------
 	def _receiver_loop(self) -> None:
@@ -867,12 +918,13 @@ def _sync_eci_ini_paths(eloquence_dir):
 		LOGGER.exception("Could not update ECI.INI voice paths")
 
 
-def initialize(indexCallback=None):
+def initialize(indexCallback=None, prepare_engines=True):
 	global onIndexReached, _current_sample_rate_mode, _current_variant
 	config_default = _normalize_rate_mode(config.conf.get("eloquence", {}).get("sampleRate", 1))
 	configured_mode = _read_persisted_rate_mode(config_default)
 	_current_sample_rate_mode = configured_mode
-	_prepare_syn_engines(configured_mode)
+	if prepare_engines:
+		_prepare_syn_engines(configured_mode)
 	eci_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "eloquence", "eci.dll"))
 	# Repair ECI.INI before the host loads the engine so voices resolve no
 	# matter where this add-on folder was copied from.
@@ -903,10 +955,11 @@ def initialize(indexCallback=None):
 
 
 def restart_for_sample_rate(mode, indexCallback=None, variant=None):
-	"""Reload only the 32-bit Eloquence host after swapping SYN variants.
+	"""Reload ECI after swapping SYN variants, retaining the host when possible.
 
-	This gives NVDA a live-ish 8/11/16 switch without restarting NVDA itself.
-	The ECI host is fully torn down so the engine reloads the active .SYN files.
+	A current helper unloads the native engine while its Python process and Host
+	Channel stay alive. Older helpers automatically fall back to a full process
+	restart, so add-on upgrades remain safe.
 	"""
 	global _current_sample_rate_mode, _current_variant
 	mode = _normalize_rate_mode(mode)
@@ -924,10 +977,33 @@ def restart_for_sample_rate(mode, indexCallback=None, variant=None):
 		_client.stop()
 	except Exception:
 		pass
-	_client.shutdown()
-	_prepare_syn_engines(mode)
+	warm_reload = _client.unload_engine()
+	if not warm_reload:
+		_client.shutdown()
+	try:
+		_prepare_syn_engines(mode)
+	except Exception:
+		if not warm_reload:
+			raise
+		# If the ECI release kept a voice module mapped, closing the process is
+		# still guaranteed to release it. Retry the file switch afterwards.
+		LOGGER.exception("Warm Eloquence unload retained a SYN mapping; restarting host")
+		_client.shutdown()
+		warm_reload = False
+		_prepare_syn_engines(mode)
 	_current_sample_rate_mode = mode
-	initialize(indexCallback)
+	try:
+		initialize(indexCallback, prepare_engines=False)
+	except Exception:
+		if not warm_reload:
+			raise
+		# Some ECI releases may retain a SYN mapping even after eciDelete and
+		# FreeLibrary. Recover with the process boundary that is known to release
+		# every mapping rather than leaving the synthesizer unavailable.
+		LOGGER.exception("Warm Eloquence reload failed; retrying with a fresh host")
+		_client.shutdown()
+		warm_reload = False
+		initialize(indexCallback, prepare_engines=False)
 	# Restore the selected synthesis model before restoring the language voice.
 	# set_voice() re-applies _current_variant immediately after eciSetParam(9),
 	# because changing language can otherwise drop copied variants such as the
@@ -948,7 +1024,11 @@ def restart_for_sample_rate(mode, indexCallback=None, variant=None):
 			setVParam(int(pr), int(value))
 		except Exception:
 			LOGGER.exception("Could not restore Eloquence voice parameter %s", pr)
-	LOGGER.info("Reloaded Eloquence host for sample-rate mode %d", mode)
+	LOGGER.info(
+		"Reloaded Eloquence engine for sample-rate mode %d (%s host)",
+		mode,
+		"retained" if warm_reload else "restarted",
+	)
 
 
 def speak(text_bytes):
