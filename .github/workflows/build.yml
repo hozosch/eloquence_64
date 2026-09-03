@@ -61,6 +61,9 @@ jobs:
       - name: Fetch proprietary files
         run: python fetch_eci.py
 
+      - name: Test
+        run: uv run --group unit-tests pytest -q
+
       - name: Build addon
         run: scons.bat && scons.bat pot
         shell: cmd
