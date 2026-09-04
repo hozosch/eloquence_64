@@ -604,6 +604,8 @@ def test_native_output_eq_matches_the_selected_reference_curve():
 
 def test_sibilance_rolloff_moves_mildly_toward_native_v21():
 	builder = _load_patch_builder()
+	assert builder.SIBILANCE_FILTER_GAIN_DB == -10.0
+	assert builder.SIBILANCE_FILTER_MAKEUP_DB == 2.5
 
 	def response_db(coefficients, frequency):
 		z = cmath.exp(-2j * math.pi * frequency / 16000)
