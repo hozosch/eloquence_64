@@ -56,6 +56,7 @@ import os
 import config
 import logging
 import globalVars
+import languageHandler
 from synthDriverHandler import (
 	SynthDriver,
 	synthIndexReached,
@@ -104,6 +105,47 @@ for code, lang in VOICE_BCP47.items():
 		continue
 	primary = lang.split("-", 1)[0].lower()
 	PRIMARY_LANGUAGE_TO_VOICE_IDS.setdefault(primary, []).append(voice_id)
+
+CHINESE_VOICE_ID = VOICE_CODE_TO_ID.get("chs")
+ASIAN_VOICE_IDS = frozenset(
+	voice_id for code, voice_id in VOICE_CODE_TO_ID.items() if code in {"chs", "jpn", "kor"}
+)
+
+
+def _split_latin_script_runs(text):
+	"""Split text into Latin and non-Latin runs without losing neutral characters."""
+	if not text:
+		return [(False, text)]
+
+	runs = []
+	current_is_latin = None
+	current = []
+	for character in text:
+		if character.isalpha():
+			is_latin = "LATIN" in unicodedata.name(character, "")
+		else:
+			is_latin = None
+
+		# Digits, punctuation, and spaces stay with the preceding script. Leading
+		# neutral characters follow the first actual letter instead.
+		if is_latin is None:
+			current.append(character)
+			continue
+		if current_is_latin is None:
+			current_is_latin = is_latin
+			current.append(character)
+			continue
+		if is_latin == current_is_latin:
+			current.append(character)
+			continue
+		runs.append((current_is_latin, "".join(current)))
+		current_is_latin = is_latin
+		current = [character]
+
+	if current:
+		runs.append((bool(current_is_latin), "".join(current)))
+	return runs
+
 
 variants = {
 	1: "Reed",
@@ -909,6 +951,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		options = self._build_options()
 		sequence_voice = getattr(self, "_defaultVoice", str(_eloquence.params.get(9, 65536)))
 		last_queued_engine_voice = getattr(self, "_lastEngineVoice", None)
+		chinese_latin_voice = self._get_chinese_latin_voice()
 
 		# Reset prosody to baseline at the start of each utterance to prevent
 		# state leaks from previous speech sequences (issue #59).
@@ -927,11 +970,24 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 
 		for item in speechSequence:
 			if isinstance(item, str):
-				s = str(item)
-				s = _eloquence_text.build(s, voice_id=sequence_voice, options=options)
-				outlist.append((_eloquence.speak, (s,)))
-				last = s
-				queued_speech = True
+				text_runs = [(False, str(item))]
+				if sequence_voice == CHINESE_VOICE_ID and chinese_latin_voice is not None:
+					text_runs = _split_latin_script_runs(str(item))
+				for use_latin_voice, text_run in text_runs:
+					run_voice = chinese_latin_voice if use_latin_voice else sequence_voice
+					if last_queued_engine_voice != run_voice:
+						outlist.append((_eloquence.set_voice, (int(run_voice),)))
+						last_queued_engine_voice = run_voice
+					s = _eloquence_text.build(text_run, voice_id=run_voice, options=options)
+					outlist.append((_eloquence.speak, (s,)))
+					last = s
+					queued_speech = True
+				# The system-language voice is temporary. Restore Chinese immediately
+				# so indexes, following commands, and the next utterance retain the
+				# selected Chinese voice.
+				if last_queued_engine_voice != sequence_voice:
+					outlist.append((_eloquence.set_voice, (int(sequence_voice),)))
+					last_queued_engine_voice = sequence_voice
 			elif isinstance(item, IndexCommand):
 				pending_indexes.append(item.index)
 				outlist.append((_eloquence.index, (item.index,)))
@@ -1291,6 +1347,20 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		if default_lang and default_lang.lower().partition("-")[0] == primary:
 			return default_voice
 		return candidates[0]
+
+	def _get_chinese_latin_voice(self):
+		"""Return the supported Latin Eloquence voice matching the Windows UI."""
+		try:
+			voice_id = self._resolve_voice_for_language(languageHandler.getWindowsLanguage())
+		except Exception:
+			log.debug("Could not resolve the Windows language for Chinese Latin text", exc_info=True)
+			return None
+		if voice_id is None:
+			return None
+		voice_id = str(voice_id)
+		if voice_id == CHINESE_VOICE_ID or voice_id in ASIAN_VOICE_IDS:
+			return None
+		return voice_id
 
 	def getVParam(self, pr):
 		return _eloquence.getVParam(pr)

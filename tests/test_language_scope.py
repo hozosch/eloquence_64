@@ -196,6 +196,7 @@ def _install_nvda_stubs():
 		postNvdaStartup=types.SimpleNamespace(register=lambda f: None)
 	)
 	sys.modules["globalVars"] = types.SimpleNamespace(appArgs=types.SimpleNamespace(secure=False))
+	sys.modules["languageHandler"] = types.SimpleNamespace(getWindowsLanguage=lambda: "de-DE")
 	sys.modules["addonHandler"] = types.SimpleNamespace(initTranslation=lambda: None)
 
 
@@ -212,6 +213,7 @@ def _load_driver():
 		return f"{voice_id}:{text}"
 
 	module._eloquence_text._text_preprocessing.preprocess = preprocess
+	module._eloquence_text._engine_encode = lambda text, voice_id: text.encode("utf-8")
 	return module, eloquence_stub, preprocess_calls
 
 
@@ -226,6 +228,14 @@ def _new_driver(module):
 	driver._ABRDICT = False
 	driver._phrasePrediction = False
 	driver.rate = 50
+	return driver
+
+
+def _new_chinese_driver(module):
+	driver = _new_driver(module)
+	driver._defaultVoice = "393216"
+	driver.curvoice = "393216"
+	driver._lastEngineVoice = "393216"
 	return driver
 
 
@@ -250,6 +260,51 @@ def _queued_text(calls, eloquence_stub):
 
 
 class LanguageScopeTests(unittest.TestCase):
+	def test_chinese_latin_text_uses_the_windows_language_voice(self):
+		module, eloquence_stub, preprocess_calls = _load_driver()
+		driver = _new_chinese_driver(module)
+
+		driver.speak(["Windows settings"])
+
+		calls = _queued_calls(eloquence_stub)
+		self.assertEqual(_queued_voice_ids(calls, eloquence_stub), [262144, 393216])
+		self.assertEqual(preprocess_calls, [("Windows settings", 262144)])
+		self.assertEqual(driver._get_voice(), "393216")
+
+	def test_chinese_mixed_text_switches_only_the_latin_run(self):
+		module, eloquence_stub, preprocess_calls = _load_driver()
+		driver = _new_chinese_driver(module)
+
+		driver.speak(["你好 Windows 11 世界"])
+
+		calls = _queued_calls(eloquence_stub)
+		self.assertEqual(_queued_voice_ids(calls, eloquence_stub), [262144, 393216])
+		self.assertEqual(
+			preprocess_calls,
+			[("你好 ", 393216), ("Windows 11 ", 262144), ("世界", 393216)],
+		)
+
+	def test_explicit_language_command_overrides_chinese_latin_switching(self):
+		module, eloquence_stub, preprocess_calls = _load_driver()
+		driver = _new_chinese_driver(module)
+
+		driver.speak([LangChangeCommand("en-US"), "Windows settings"])
+
+		calls = _queued_calls(eloquence_stub)
+		self.assertEqual(_queued_voice_ids(calls, eloquence_stub), [65536])
+		self.assertEqual(preprocess_calls, [("Windows settings", 65536)])
+
+	def test_unsupported_windows_language_keeps_chinese_internal_latin_voice(self):
+		module, eloquence_stub, preprocess_calls = _load_driver()
+		module.languageHandler.getWindowsLanguage = lambda: "pl-PL"
+		driver = _new_chinese_driver(module)
+
+		driver.speak(["Windows settings"])
+
+		calls = _queued_calls(eloquence_stub)
+		self.assertEqual(_queued_voice_ids(calls, eloquence_stub), [])
+		self.assertEqual(preprocess_calls, [("Windows settings", 393216)])
+
 	def test_english_document_language_does_not_replace_default_voice(self):
 		module, eloquence_stub, preprocess_calls = _load_driver()
 		driver = _new_driver(module)
