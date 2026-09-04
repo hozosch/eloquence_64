@@ -65,6 +65,12 @@ SIBILANCE_FILTER_FREQUENCY = 4800.0
 SIBILANCE_FILTER_GAIN_DB = -5.0
 SIBILANCE_FILTER_MAKEUP_DB = 1.25
 VOICED_GAIN_DB = -1.5
+EARLY_VOICED_HOOK_DELTA = 0x1965
+EARLY_VOICED_HOOK_OLD = bytes.fromhex("8b8ef3140000")
+EARLY_VOICED_HELPER_OFFSET = 0x5A0
+VOICED_S_GAIN = struct.pack("<f", 0.7498942017555237)
+FRICATION_MIX_GAIN = struct.pack("<f", 0.3548133969306946)
+VOICED_S_GAIN_TABLE_TAIL = VOICED_S_GAIN + FRICATION_MIX_GAIN
 OUTPUT_EQ_SAMPLE_RATE = 16000.0
 LOW_BASS_EQ = (220.0, 2.0, 1.0)
 V21_REFERENCE_EQ = (3430.0, 8.0, 0.406)
@@ -99,6 +105,7 @@ SPLIT_BAND_COEFFICIENTS = (
 )
 DIRECT_PATH_GAIN = 0.7943282347242815
 SIBILANCE_TARGET_STACK_OFFSETS = (0xF0, 0xF4)
+NATIVE_EQ_RESET_CALL = bytes.fromhex("e805050000")
 
 
 def _sibilance_filter_coefficients(
@@ -208,6 +215,34 @@ def _native_output_eq_coefficients(presence_enabled: bool) -> tuple[float, ...]:
 	else:
 		coefficients += (1.0, 0.0, 0.0, 0.0, 0.0)
 	return coefficients
+
+
+def _early_voiced_gain_code(gain_db: float) -> bytes:
+	"""Scale the still-separated cascade/voicing buffer at the proven early hook."""
+	code = bytes.fromhex(
+		"60"                    # pushad
+		"e800000000"            # call next instruction
+		"5b"                    # pop ebx: position-independent base
+		"8b8ef3140000"          # mov ecx, [esi+14f3h]
+		"85c9"                  # test ecx, ecx
+		"7e1a"                  # jle done
+		"8b96930d0000"          # mov edx, [esi+0d93h]
+		"d9832e000000"          # fld gain at helper+34h
+		"d902"                  # loop: fld [edx]
+		"d8c9"                  # fmul st, st(1)
+		"d91a"                  # fstp [edx]
+		"83c204"                # add edx, 4
+		"49"                    # dec ecx
+		"75f4"                  # jne loop
+		"ddd8"                  # fstp st(0)
+		"61"                    # popad
+		"8b8ef3140000"          # displaced mov ecx, [esi+14f3h]
+		"c3"                    # ret
+		"90"                    # align gain to helper+34h
+	)
+	if len(code) != 0x34:
+		raise AssertionError(len(code))
+	return code + struct.pack("<f", 10.0 ** (gain_db / 20.0))
 
 
 def make_native_s_patch(source: Path, destination: Path) -> None:
@@ -531,6 +566,12 @@ def make_sibilance_rolloff_patch(
 		makeup_db,
 	)
 	original_size, patched_size, runs = _read_runs(source.read_bytes())
+	xflt_runtime_offset = _xflt_runtime_offset(runs, source)
+	count_runs = [
+		run for run in runs if run[1] == b"\x8b\x85\x36\x0a" and run[2] == b"\xb8\x06\x00\x00"
+	]
+	if len(count_runs) != 1:
+		raise ValueError(f"Could not uniquely locate formant-count instruction in {source}")
 	append_indices = [i for i, (offset, old, _new) in enumerate(runs) if offset == original_size and not old]
 	if len(append_indices) != 1:
 		raise ValueError(f"Could not uniquely locate appended .xflt data in {source}")
@@ -565,6 +606,18 @@ def make_sibilance_rolloff_patch(
 		VOICED_GAIN_OFFSET,
 		10.0 ** (voiced_gain_db / 20.0),
 	)
+	reset_calls = [
+		offset
+		for offset in range(len(code) - len(NATIVE_EQ_RESET_CALL) + 1)
+		if code[offset : offset + len(NATIVE_EQ_RESET_CALL)] == NATIVE_EQ_RESET_CALL
+	]
+	if len(reset_calls) != 1:
+		raise ValueError(f"Could not uniquely locate native-EQ reset call in {source}")
+	reset_call = reset_calls[0]
+	reset_target = reset_call + 5 + struct.unpack_from("<i", code, reset_call + 1)[0]
+	if reset_target != NATIVE_OUTPUT_EQ_OFFSET - SPLIT_FILTER_BLOCK_OFFSET:
+		raise ValueError(f"Native-EQ reset call has an unexpected target in {source}")
+	code[reset_call : reset_call + 5] = b"\x90" * 5
 	output_eq_code = bytearray(NATIVE_OUTPUT_EQ_CODE)
 	struct.pack_into(
 		"<I",
@@ -579,6 +632,19 @@ def make_sibilance_rolloff_patch(
 		*_native_output_eq_coefficients(presence_enabled),
 	)
 	modified_append = bytearray(append_new)
+	voiced_s_hits = []
+	search_from = 0
+	while True:
+		hit = append_new.find(VOICED_S_GAIN_TABLE_TAIL, search_from)
+		if hit < 0:
+			break
+		voiced_s_hits.append(hit)
+		search_from = hit + 1
+	if len(voiced_s_hits) != 1 or voiced_s_hits[0] < 4:
+		raise ValueError(f"Could not uniquely locate voiced-S gain table in {source}")
+	voiced_s_gain_offset = voiced_s_hits[0]
+	unvoiced_s_gain = append_new[voiced_s_gain_offset - 4 : voiced_s_gain_offset]
+	modified_append[voiced_s_gain_offset : voiced_s_gain_offset + 4] = unvoiced_s_gain
 	modified_append[b6_code_in_append : b6_code_in_append + len(base_b6_code)] = (
 		_b6_bandwidth_code(b6_multiplier)
 	)
@@ -591,25 +657,16 @@ def make_sibilance_rolloff_patch(
 	):
 		raise ValueError(f"Native-frication return tail was not found in {source}")
 	if voiced_gain_db < 0.0:
-		call_offset = 0x100 + FRICATION_RETURN_TAIL_OFFSET + 1
-		call_target = SPLIT_FILTER_BLOCK_OFFSET + VOICED_BUFFER_PROCESS_OFFSET
-		call_displacement = call_target - (call_offset + 5)
-		patched_return = b"\x61\xe8" + struct.pack("<i", call_displacement) + b"\x90\x90\xc3"
-		if len(patched_return) != len(FRICATION_RETURN_TAIL):
-			raise AssertionError("Voiced-path hook must preserve the frication return size")
-		modified_append[frication_return : frication_return + len(patched_return)] = (
-			patched_return
-		)
+		helper = _early_voiced_gain_code(voiced_gain_db)
+		helper_in_append = entry_in_append + EARLY_VOICED_HELPER_OFFSET
+		if modified_append[helper_in_append : helper_in_append + len(helper)] != b"\x90" * len(helper):
+			raise ValueError(f"Early voiced-gain code cave is not empty in {source}")
+		modified_append[helper_in_append : helper_in_append + len(helper)] = helper
 	runs[append_index] = (append_offset, append_old, bytes(modified_append))
 
-	count_runs = [
-		run for run in runs if run[1] == b"\x8b\x85\x36\x0a" and run[2] == b"\xb8\x06\x00\x00"
-	]
-	if len(count_runs) != 1:
-		raise ValueError(f"Could not uniquely locate formant-count instruction in {source}")
 	final_hook_offset = count_runs[0][0] + FINAL_OUTPUT_HOOK_DELTA
 	final_hook_target = (
-		_xflt_runtime_offset(runs, source)
+		xflt_runtime_offset
 		+ NATIVE_OUTPUT_EQ_OFFSET
 		+ NATIVE_OUTPUT_EQ_PROCESS_OFFSET
 	)
@@ -619,6 +676,18 @@ def make_sibilance_rolloff_patch(
 		append_index,
 		(final_hook_offset, FINAL_BUFFER_COUNT_LOAD, final_hook),
 	)
+	if voiced_gain_db < 0.0:
+		early_hook_offset = count_runs[0][0] + EARLY_VOICED_HOOK_DELTA
+		early_hook_target = xflt_runtime_offset + EARLY_VOICED_HELPER_OFFSET
+		early_call = b"\xe8" + struct.pack(
+			"<i",
+			early_hook_target - (early_hook_offset + 5),
+		) + b"\x90"
+		insert_at = next(
+			(index for index, (offset, _old, _new) in enumerate(runs) if offset > early_hook_offset),
+			append_index,
+		)
+		runs.insert(insert_at, (early_hook_offset, EARLY_VOICED_HOOK_OLD, early_call))
 	_write_runs(destination, original_size, patched_size, runs)
 
 

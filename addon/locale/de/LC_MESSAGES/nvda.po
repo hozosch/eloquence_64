@@ -292,6 +292,10 @@ msgstr "&Pausen kürzen"
 msgid "&Sample rate"
 msgstr "&Abtastrate"
 
+#: synthDrivers/eloquence.py
+msgid "Enable native &presence contour (16 kHz only)"
+msgstr "Native Präsen&zkontur aktivieren (nur bei 16 kHz)"
+
 #: synthDrivers/eloquence.py:821
 msgid ""
 "Eloquence has been updated with a new communication system.\n"

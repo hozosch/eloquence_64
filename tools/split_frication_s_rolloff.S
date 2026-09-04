@@ -20,7 +20,9 @@ resetSplitFrication:
 	/* Direct state, four ch/sch states and two s/t/z states. */
 	movl $14, %ecx
 	rep stosl
-	/* The separate native output block owns the final EQ and gain state. */
+	/* Reserve the call site used while comparing reset strategies. The release
+	 * generator replaces this call with NOPs so the final EQ state remains
+	 * continuous across consonant-state resets. */
 	call .LblockStart + 0x520
 	popl %edi
 	ret
@@ -240,9 +242,10 @@ sibilanceStates:
 	.float 0.0, 0.0
 	.float 0.0, 0.0
 
-	/* The cascade/voicing buffer is still separate here; direct and parallel
-	 * frication have not been mixed into it. Apply one fixed path gain on every
-	 * block, with no phoneme detector, gain switching or envelope. */
+	/* Retain the comparison helper and its data layout for patch compatibility.
+	 * The release generator leaves its former late call site unused and installs
+	 * an equivalent helper at .xflt+0x5a0, reached from the proven early hook
+	 * while the cascade/voicing buffer is still separate from frication. */
 	.balign 16
 	.globl scaleVoicedBuffer
 	.type scaleVoicedBuffer,@function

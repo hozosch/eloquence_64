@@ -376,6 +376,10 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 				builder.VOICED_GAIN_OFFSET,
 				10.0 ** (builder.VOICED_GAIN_DB / 20.0),
 			)
+			reset_call = expected_code.index(builder.NATIVE_EQ_RESET_CALL)
+			expected_code[reset_call : reset_call + len(builder.NATIVE_EQ_RESET_CALL)] = (
+				b"\x90" * len(builder.NATIVE_EQ_RESET_CALL)
+			)
 			assert append[code_offset : code_offset + len(expected_code)] == expected_code
 
 			output_eq_offset = entry + builder.NATIVE_OUTPUT_EQ_OFFSET
@@ -398,17 +402,26 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 
 			final_runs = [run for run in runs if run[1] == builder.FINAL_BUFFER_COUNT_LOAD]
 			assert len(final_runs) == 1
+			early_runs = [run for run in runs if run[1] == builder.EARLY_VOICED_HOOK_OLD]
+			assert len(early_runs) == 1
 			frication_return = entry + 0x100 + builder.FRICATION_RETURN_TAIL_OFFSET
-			patched_return = append[
+			assert append[
 				frication_return : frication_return + len(builder.FRICATION_RETURN_TAIL)
+			] == builder.FRICATION_RETURN_TAIL
+
+			early_helper_offset = entry + builder.EARLY_VOICED_HELPER_OFFSET
+			early_helper = builder._early_voiced_gain_code(builder.VOICED_GAIN_DB)
+			assert append[
+				early_helper_offset : early_helper_offset + len(early_helper)
+			] == early_helper
+
+			voiced_s_gain_offset = reference_append.index(builder.VOICED_S_GAIN_TABLE_TAIL)
+			unvoiced_s_gain = reference_append[
+				voiced_s_gain_offset - 4 : voiced_s_gain_offset
 			]
-			assert patched_return[:2] == b"\x61\xe8"
-			call_offset = 0x100 + builder.FRICATION_RETURN_TAIL_OFFSET + 1
-			call_target = call_offset + 5 + struct.unpack_from("<i", patched_return, 2)[0]
-			assert call_target == (
-				builder.SPLIT_FILTER_BLOCK_OFFSET + builder.VOICED_BUFFER_PROCESS_OFFSET
-			)
-			assert patched_return[-3:] == b"\x90\x90\xc3"
+			assert append[
+				voiced_s_gain_offset : voiced_s_gain_offset + 4
+			] == unvoiced_s_gain
 			differences = {
 				i for i, pair in enumerate(zip(append, reference_append)) if pair[0] != pair[1]
 			}
@@ -419,13 +432,15 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			)
 			allowed_differences.update(range(b6_multiplier_offset, b6_multiplier_offset + 4))
 			allowed_differences.update(
-				range(frication_return, frication_return + len(builder.FRICATION_RETURN_TAIL))
+				range(early_helper_offset, early_helper_offset + len(early_helper))
 			)
+			allowed_differences.update(range(voiced_s_gain_offset, voiced_s_gain_offset + 4))
 			assert differences <= allowed_differences
 			assert [
 				run
 				for run in runs
-				if run[0] != original_size and run[1] != builder.FINAL_BUFFER_COUNT_LOAD
+				if run[0] != original_size
+				and run[1] not in (builder.FINAL_BUFFER_COUNT_LOAD, builder.EARLY_VOICED_HOOK_OLD)
 			] == [run for run in reference_runs if run[0] != original_size]
 
 	code = builder.SIBILANCE_ROLLOFF_FILTER_CODE
@@ -445,8 +460,9 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 	assert bytes.fromhex("8bbe930d0000") in voiced_path_code
 	assert bytes.fromhex("d88db2ffffff") in voiced_path_code
 	assert voiced_path_code.endswith(bytes.fromhex("618b942410010000c3"))
-	# Resetting the consonant state also calls the separate native output block.
-	assert bytes.fromhex("f3abe805050000") in code[:0x20]
+	# The source template still reserves the native-EQ reset call. The release
+	# generator removes that call so filter history remains continuous.
+	assert bytes.fromhex("f3ab") + builder.NATIVE_EQ_RESET_CALL in code[:0x20]
 
 	output_code = builder.NATIVE_OUTPUT_EQ_CODE
 	process_code = output_code[builder.NATIVE_OUTPUT_EQ_PROCESS_OFFSET :]
@@ -490,6 +506,9 @@ def test_sibilance_rolloff_code_stays_before_the_mapped_original_mixer():
 		entry = append.index(builder.XFLT_ENTRY)
 		code_offset = entry + builder.SPLIT_FILTER_BLOCK_OFFSET
 		code = append[code_offset : code_offset + len(builder.SIBILANCE_ROLLOFF_FILTER_CODE)]
+		assert code[reset_call : reset_call + len(builder.NATIVE_EQ_RESET_CALL)] == (
+			b"\x90" * len(builder.NATIVE_EQ_RESET_CALL)
+		), syn.name
 		popa_jump = code.rfind(b"\x61\xe9")
 		assert popa_jump >= 0, syn.name
 		jump = popa_jump + 1
@@ -525,15 +544,40 @@ def test_final_output_eq_calls_reach_mapped_code_in_every_engine():
 		assert actual_target_rva == expected_target_rva, syn.name
 
 
+def test_early_voiced_gain_calls_reach_mapped_code_in_every_engine():
+	builder = _load_patch_builder()
+	for syn in _bundled_syns():
+		patch = syn.with_suffix(".p16s1")
+		original_size, patched_size, runs = builder._read_runs(patch.read_bytes())
+		patched = bytearray(syn.read_bytes()) + bytearray(patched_size - original_size)
+		for offset, old, new in runs:
+			assert patched[offset : offset + len(old)] == old
+			patched[offset : offset + len(new)] = new
+
+		early_run = next(run for run in runs if run[1] == builder.EARLY_VOICED_HOOK_OLD)
+		early_offset, _old, early_new = early_run
+		assert early_new[:1] == b"\xe8" and early_new[-1:] == b"\x90"
+		source_rva = _pe_rva_for_raw_offset(patched, early_offset)
+		actual_target_rva = source_rva + 5 + struct.unpack_from("<i", early_new, 1)[0]
+		append = next(new for offset, old, new in runs if offset == original_size and not old)
+		entry = append.index(builder.XFLT_ENTRY)
+		expected_target_rva = _pe_rva_for_raw_offset(
+			patched,
+			original_size + entry + builder.EARLY_VOICED_HELPER_OFFSET,
+		)
+		assert actual_target_rva == expected_target_rva, syn.name
+
+
 def test_voiced_path_gain_is_a_fixed_native_multiplier():
 	builder = _load_patch_builder()
 	target = 10.0 ** (builder.VOICED_GAIN_DB / 20.0)
 	assert math.isclose(20.0 * math.log10(target), -1.5, abs_tol=1e-12)
-	code = builder.SIBILANCE_ROLLOFF_FILTER_CODE
-	assert struct.unpack_from("<f", code, builder.VOICED_GAIN_OFFSET) == (1.0,)
-	voiced_path_code = code[builder.VOICED_BUFFER_PROCESS_OFFSET :]
-	assert bytes.fromhex("d88db2ffffff") in voiced_path_code
-	assert b"\x0a\xd7\x23\x3d" not in voiced_path_code
+	helper = builder._early_voiced_gain_code(builder.VOICED_GAIN_DB)
+	assert math.isclose(struct.unpack_from("<f", helper, 0x34)[0], target, rel_tol=1e-7)
+	assert helper.startswith(bytes.fromhex("60e8000000005b8b8ef314000085c9"))
+	assert bytes.fromhex("8b96930d0000") in helper
+	assert helper[:-4].endswith(bytes.fromhex("618b8ef3140000c390"))
+	assert bytes.fromhex("83be5318000000") not in helper
 
 
 def test_native_output_eq_matches_the_selected_reference_curve():

@@ -1,5 +1,6 @@
 import importlib.util
 import queue
+import struct
 import sys
 import types
 import unittest
@@ -136,6 +137,40 @@ class WarmEngineReloadTests(unittest.TestCase):
 
 
 class AudioWorkerTests(unittest.TestCase):
+	def test_pcm16_start_fade_is_continuous_across_chunks(self):
+		module = _load_client_module()
+		first, position = module._fade_pcm16_start(struct.pack("<2h", 1000, 1000), 0, 4)
+		last, position = module._fade_pcm16_start(struct.pack("<3h", 1000, 1000, 1000), position, 4)
+
+		self.assertEqual(struct.unpack("<2h", first), (0, 333))
+		self.assertEqual(struct.unpack("<3h", last), (667, 1000, 1000))
+		self.assertEqual(position, 4)
+
+	def test_audio_worker_uses_a_two_millisecond_fade_at_the_current_rate(self):
+		module = _load_client_module()
+		module._current_sample_rate_mode = 4
+		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
+		self.assertEqual(worker._start_fade_samples, 32)
+
+		module._current_sample_rate_mode = 1
+		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
+		self.assertEqual(worker._start_fade_samples, 22)
+
+	def test_new_sequence_restarts_the_start_fade(self):
+		module = _load_client_module()
+		events = []
+		audio_queue = queue.Queue()
+		audio_queue.put((struct.pack("<2h", 1000, 1000), None, False, 0))
+		audio_queue.put((struct.pack("<2h", 1000, 1000), None, False, 1))
+		audio_queue.put((b"", None, False, 1))
+		audio_queue.put(None)
+
+		module.AudioWorker(FakePlayer(events), audio_queue, FakeClient()).run()
+
+		feeds = [data for event, data in events if event == "feed"]
+		self.assertEqual(len(feeds), 2)
+		self.assertEqual([struct.unpack_from("<h", data)[0] for data in feeds], [0, 0])
+
 	def test_index_notification_waits_for_preceding_audio(self):
 		# Index-only chunks must never reach WavePlayer.feed: degenerate tiny
 		# buffers can cause audible clicks on some devices (see #127). Attach the
@@ -144,7 +179,8 @@ class AudioWorkerTests(unittest.TestCase):
 		events = []
 		module.onIndexReached = lambda index: events.append(("index", index))
 		audio_queue = queue.Queue()
-		audio_queue.put((b"audio", None, False, 0))
+		audio = b"\x00\x00\x00\x00"
+		audio_queue.put((audio, None, False, 0))
 		audio_queue.put((b"", 42, False, 0))
 		audio_queue.put(None)
 		player = FakePlayer(events)
@@ -152,27 +188,29 @@ class AudioWorkerTests(unittest.TestCase):
 
 		worker.run()
 
-		self.assertEqual(events, [("feed", b"audio")])
+		self.assertEqual(events, [("feed", audio)])
 		self.assertEqual(len(player.on_done), 1)
 
 		player.on_done[0]()
 
-		self.assertEqual(events, [("feed", b"audio"), ("index", 42)])
+		self.assertEqual(events, [("feed", audio), ("index", 42)])
 
 	def test_index_notification_is_attached_to_last_preceding_audio_chunk(self):
 		module = _load_client_module()
 		events = []
 		module.onIndexReached = lambda index: events.append(("index", index))
 		audio_queue = queue.Queue()
-		audio_queue.put((b"first", None, False, 0))
-		audio_queue.put((b"last", None, False, 0))
+		first = b"\x00\x00"
+		last = b"\x00\x00\x00\x00"
+		audio_queue.put((first, None, False, 0))
+		audio_queue.put((last, None, False, 0))
 		audio_queue.put((b"", 42, False, 0))
 		audio_queue.put(None)
 		player = FakePlayer(events)
 
 		module.AudioWorker(player, audio_queue, FakeClient()).run()
 
-		self.assertEqual(events, [("feed", b"first"), ("feed", b"last")])
+		self.assertEqual(events, [("feed", first), ("feed", last)])
 		self.assertEqual(len(player.on_done), 1)
 		player.on_done[0]()
 		self.assertEqual(events[-1], ("index", 42))
@@ -182,7 +220,8 @@ class AudioWorkerTests(unittest.TestCase):
 		events = []
 		module.onIndexReached = lambda index: events.append(("index", index))
 		audio_queue = queue.Queue()
-		audio_queue.put((b"audio", None, False, 0))
+		audio = b"\x00\x00\x00\x00"
+		audio_queue.put((audio, None, False, 0))
 		audio_queue.put((b"", 42, False, 0))
 		audio_queue.put((b"", None, True, 0))
 		audio_queue.put(None)
@@ -190,7 +229,7 @@ class AudioWorkerTests(unittest.TestCase):
 
 		module.AudioWorker(player, audio_queue, FakeClient()).run()
 
-		self.assertLess(events.index(("feed", b"audio")), events.index(("index", 42)))
+		self.assertLess(events.index(("feed", audio)), events.index(("index", 42)))
 		self.assertLess(events.index(("index", 42)), events.index(("index", None)))
 
 

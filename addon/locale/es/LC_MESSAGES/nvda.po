@@ -371,6 +371,11 @@ msgstr "Habilitar pr&edicción de frases"
 msgid "Shorten &pauses"
 msgstr "Acortar &pausas"
 
+#. Translators: A synth setting that selects the native 4 kHz contour in 16 kHz mode
+#: addon\synthDrivers\eloquence.py
+msgid "Enable native &presence contour (16 kHz only)"
+msgstr "Activar el contorno de prese&ncia nativo (solo a 16 kHz)"
+
 #. Translators: An option in the "Shorten pauses" combo box in speech settings
 #: addon\synthDrivers\eloquence.py:993
 msgid "Never"

@@ -43,6 +43,7 @@ _current_sample_rate_mode = 1
 _current_variant = 0
 _presence_contour_enabled = True
 _ECI_SAMPLE_RATE_PARAM = 5
+_UTTERANCE_START_FADE_SECONDS = 0.002
 
 _RATE_MARKER_PATH = os.path.join(os.path.dirname(__file__), "eloquence", "nativeRateMode.txt")
 
@@ -239,6 +240,23 @@ def set_sample_rate(mode) -> None:
 		LOGGER.exception("Failed to set Eloquence sample rate")
 
 
+def _fade_pcm16_start(data: bytes, position: int, total_samples: int) -> Tuple[bytes, int]:
+	"""Apply the remaining part of a short linear fade to mono PCM16 audio."""
+	if not data or position >= total_samples:
+		return data, position
+	if len(data) % 2:
+		raise ValueError("PCM16 audio chunk has an odd byte length")
+
+	output = bytearray(data)
+	fade_samples = min(len(output) // 2, total_samples - position)
+	denominator = max(1, total_samples - 1)
+	for index in range(fade_samples):
+		sample = struct.unpack_from("<h", output, index * 2)[0]
+		gain = (position + index) / denominator
+		struct.pack_into("<h", output, index * 2, round(sample * gain))
+	return bytes(output), position + fade_samples
+
+
 class AudioWorker(threading.Thread):
 	_CHANNELS = 1
 	_BITS_PER_SAMPLE = 16
@@ -257,6 +275,10 @@ class AudioWorker(threading.Thread):
 		self._running = True
 		self._stopping = False
 		self._player_lock = threading.RLock()
+		base_rate = _ECI_BASE_RATE_MAP.get(get_sample_rate(), self._SAMPLE_RATE)
+		self._start_fade_samples = max(2, round(base_rate * _UTTERANCE_START_FADE_SECONDS))
+		self._start_fade_position = 0
+		self._last_audio_sequence: Optional[int] = None
 
 	def run(self) -> None:
 		pending_audio: Optional[AudioChunk] = None
@@ -275,11 +297,25 @@ class AudioWorker(threading.Thread):
 				continue
 
 			if data:
+				# A two-millisecond ramp suppresses a discontinuity left by a cancelled
+				# utterance or persistent native-EQ history. It is applied only at a
+				# real utterance boundary, never at phoneme or audio-chunk boundaries.
+				if seq != self._last_audio_sequence:
+					self._start_fade_position = 0
+					self._last_audio_sequence = seq
+				data, self._start_fade_position = _fade_pcm16_start(
+					data,
+					self._start_fade_position,
+					self._start_fade_samples,
+				)
+				chunk = (data, index, is_final, seq)
 				# Hold one real Audio Chunk so a following index-only event can use
 				# WavePlayer's completion callback without feeding a synthetic sample.
 				if pending_audio:
 					self._feed_audio(*pending_audio[:3])
 				pending_audio = chunk
+				if is_final:
+					self._start_fade_position = 0
 				self._queue.task_done()
 				continue
 
@@ -299,6 +335,7 @@ class AudioWorker(threading.Thread):
 				if index is not None:
 					self._sync_and_invoke_index(index)
 				if is_final:
+					self._start_fade_position = 0
 					self._schedule_idle()
 			self._queue.task_done()
 

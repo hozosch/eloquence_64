@@ -6,6 +6,8 @@
 	.type processNativeOutput,@function
 
 resetNativeOutputEq:
+	/* This entry remains part of the stable injected-data ABI. The release patch
+	 * deliberately does not call it during consonant-state resets. */
 	pushal
 	call .LresetBase
 .LresetBase:

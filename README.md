@@ -42,9 +42,10 @@ class into the next. Bass +2 dB, the measured v21 reference shelf, and the
 optional 4 kHz/Q1.5 presence contour run in the injected native float path
 before Eloquence converts its output to PCM16. Earlier in that native pipeline,
 the still-separate cascade/voicing buffer receives a fixed -1.5 dB multiplier
-before direct and parallel frication are mixed in. There is no detector, fade,
-or phoneme-specific level exception; the independent frication routing continues
-to protect the spectral shape of s/t/z.
+before direct and parallel frication are mixed in. The gain itself has no
+detector, envelope, or phoneme-specific exception; the independent frication
+routing continues to protect the spectral shape of s/t/z. A separate 2 ms ramp
+is applied only at the beginning of each utterance to prevent start clicks.
 
 Presence on and off are two internal native patch variants, not additional
 sample-rate modes. Changing the checkbox while 16 kHz is active therefore uses

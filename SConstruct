@@ -20,6 +20,8 @@ env.Append(**buildVars.addon_info)
 # Development patches remain in the repository for reproducibility. Release
 # bundles carry only the two internal variants of the selected 16 kHz mode.
 env["excludePatterns"] = (
+	"**/__pycache__/*",
+	"**/*.pyc",
 	"synthDrivers/eloquence/*.p16",
 	"synthDrivers/eloquence/*.p16n",
 	"synthDrivers/eloquence/*.p16b*",

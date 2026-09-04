@@ -720,13 +720,6 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 			False,
 		),
 
-		# Translators: A synth setting that selects the native 4 kHz contour in 16 kHz mode
-		BooleanDriverSetting(
-			"presenceContour",
-			_("Enable native &presence contour (16 kHz only)"),
-			True,
-		),
-
 		# Translators: A synth setting available in speech settings dialog
 		DriverSetting(
 			"pauseMode",
@@ -739,6 +732,13 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 			"sampleRate",
 			_("&Sample rate"),
 			defaultVal="1",
+		),
+
+		# Translators: A synth setting that selects the native 4 kHz contour in 16 kHz mode
+		BooleanDriverSetting(
+			"presenceContour",
+			_("Enable native &presence contour (16 kHz only)"),
+			defaultVal=True,
 		),
 	]
 
@@ -1053,6 +1053,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 
 		oldVal = int(getattr(self, "_sample_rate", 1))
 		self._sample_rate = int(val)
+		self._schedule_presence_contour_visibility_update()
 		_eloquence.persist_rate_mode(val)
 
 		# Entering/leaving native 16 kHz changes the already-loaded SYN modules.
@@ -1120,7 +1121,47 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		self._phrasePrediction = enable
 
 	def _get_presenceContour(self):
+		# The voice settings panel may have just created this checkbox. Queue the
+		# update so it is hidden after the panel has finished constructing itself.
+		self._schedule_presence_contour_visibility_update()
 		return self._presenceContour
+
+	def _schedule_presence_contour_visibility_update(self):
+		try:
+			wx.CallAfter(self._update_presence_contour_visibility)
+		except Exception:
+			log.debug("Could not schedule presence-contour visibility update", exc_info=True)
+
+	def _update_presence_contour_visibility(self):
+		"""Show the presence checkbox only while native 16 kHz is selected."""
+		try:
+			panelClass = getattr(gui.settingsDialogs, "VoiceSettingsPanel", None)
+			if panelClass is None:
+				return
+			windows = list(wx.GetTopLevelWindows())
+			while windows:
+				window = windows.pop()
+				windows.extend(window.GetChildren())
+				if not isinstance(window, panelClass):
+					continue
+				try:
+					if window.getSettings() is not self:
+						continue
+				except Exception:
+					continue
+				control = getattr(window, "sizerDict", {}).get("presenceContour")
+				if control is None:
+					continue
+				visible = int(getattr(self, "_sample_rate", 1)) == 4
+				if visible:
+					window.settingsSizer.Show(control)
+				else:
+					window.settingsSizer.Hide(control)
+				window.settingsSizer.Layout()
+				window._sendLayoutUpdatedEvent()
+		except Exception:
+			# A settings-dialog implementation detail must never affect synthesis.
+			log.debug("Could not update presence-contour visibility", exc_info=True)
 
 	def _set_presenceContour(self, enable):
 		enable = bool(enable)

@@ -373,6 +373,11 @@ msgstr "Activer la prédiction de phras&e"
 msgid "Shorten &pauses"
 msgstr "Raccourcir les &pauses"
 
+#. Translators: A synth setting that selects the native 4 kHz contour in 16 kHz mode
+#: addon\synthDrivers\eloquence.py
+msgid "Enable native &presence contour (16 kHz only)"
+msgstr "Activer le contour de pré&sence natif (16 kHz uniquement)"
+
 #. Translators: An option in the "Shorten pauses" combo box in speech settings
 #: addon\synthDrivers\eloquence.py:993
 msgid "Never"
