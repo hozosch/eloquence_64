@@ -359,6 +359,15 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			assert struct.unpack_from("<f", append, b6_multiplier_offset)[0] == 4.5
 			code_offset = entry + builder.SPLIT_FILTER_BLOCK_OFFSET
 			expected_code = bytearray(builder.SIBILANCE_ROLLOFF_FILTER_CODE)
+			active_voice_bypass = expected_code.index(builder.ACTIVE_VOICE_BYPASS)
+			voice_routing = (
+				builder.HISTORICAL_PHONE_VOICE_BYPASS
+				if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES
+				else builder.FILTER_ALL_SIBILANCE
+			)
+			expected_code[
+				active_voice_bypass : active_voice_bypass + len(builder.ACTIVE_VOICE_BYPASS)
+			] = voice_routing
 			coefficients = builder._sibilance_filter_coefficients(
 				builder.SIBILANCE_FILTER_FREQUENCY,
 				builder.SIBILANCE_FILTER_GAIN_DB,
@@ -381,6 +390,73 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 				b"\x90" * len(builder.NATIVE_EQ_RESET_CALL)
 			)
 			assert append[code_offset : code_offset + len(expected_code)] == expected_code
+			table_suffix = reference_append.index(builder.TABLE_SUFFIX)
+			blend_offset = table_suffix - 8
+			expected_blend = (
+				builder.HISTORICAL_SIBILANCE_BLEND
+				if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES
+				else 0.0
+			)
+			assert append[blend_offset : blend_offset + 4] == struct.pack(
+				"<f", expected_blend
+			)
+			blend_code_offset = reference_append.index(builder.VOICE_ONLY_BLEND_CODE)
+			assert (
+				reference_append.find(builder.VOICE_ONLY_BLEND_CODE, blend_code_offset + 1) < 0
+			)
+			helper_offset = entry + builder.VOICE_ONLY_BLEND_HELPER_OFFSET
+			helper_end = helper_offset + len(builder.VOICE_ONLY_BLEND_HELPER_CODE)
+			classifier_offset = entry + builder.SIBILANCE_CLASSIFIER_OFFSET
+			classifier_end = classifier_offset + len(builder.SIBILANCE_CLASSIFIER_CODE)
+			assert (
+				reference_append[classifier_offset:classifier_end]
+				== builder.SIBILANCE_CLASSIFIER_CODE
+			)
+			composite_classifier_offset = (
+				entry + builder.COMPOSITE_SIBILANCE_CLASSIFIER_OFFSET
+			)
+			composite_classifier_end = (
+				composite_classifier_offset + len(builder.COMPOSITE_SIBILANCE_CLASSIFIER_CODE)
+			)
+			if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES:
+				assert builder.ACTIVE_VOICE_BYPASS not in expected_code
+				assert builder.HISTORICAL_PHONE_VOICE_BYPASS in expected_code
+				blend_call = b"\xe8" + struct.pack(
+					"<i", helper_offset - (blend_code_offset + 5)
+				)
+				assert append[
+					blend_code_offset : blend_code_offset + len(builder.VOICE_ONLY_BLEND_CODE)
+				] == blend_call + b"\x90" * (
+					len(builder.VOICE_ONLY_BLEND_CODE) - len(blend_call)
+				)
+				assert append[helper_offset:helper_end] == builder.VOICE_ONLY_BLEND_HELPER_CODE
+				classifier_call = b"\xe8" + struct.pack(
+					"<i", composite_classifier_offset - (classifier_offset + 5)
+				)
+				assert append[classifier_offset:classifier_end] == (
+					classifier_call
+					+ b"\x90" * (len(builder.SIBILANCE_CLASSIFIER_CODE) - len(classifier_call))
+				)
+				assert (
+					append[composite_classifier_offset:composite_classifier_end]
+					== builder.COMPOSITE_SIBILANCE_CLASSIFIER_CODE
+				)
+			else:
+				assert builder.ACTIVE_VOICE_BYPASS not in expected_code
+				assert builder.HISTORICAL_PHONE_VOICE_BYPASS not in expected_code
+				assert builder.FILTER_ALL_SIBILANCE in expected_code
+				assert append[
+					blend_code_offset : blend_code_offset + len(builder.VOICE_ONLY_BLEND_CODE)
+				] == builder.VOICE_ONLY_BLEND_CODE
+				assert append[helper_offset:helper_end] == b"\x90" * len(
+					builder.VOICE_ONLY_BLEND_HELPER_CODE
+				)
+				assert append[classifier_offset:classifier_end] == builder.SIBILANCE_CLASSIFIER_CODE
+				assert append[
+					composite_classifier_offset:composite_classifier_end
+				] == b"\x90" * len(
+					builder.COMPOSITE_SIBILANCE_CLASSIFIER_CODE
+				)
 
 			output_eq_offset = entry + builder.NATIVE_OUTPUT_EQ_OFFSET
 			expected_output_eq = bytearray(builder.NATIVE_OUTPUT_EQ_CODE)
@@ -435,6 +511,16 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 				range(early_helper_offset, early_helper_offset + len(early_helper))
 			)
 			allowed_differences.update(range(voiced_s_gain_offset, voiced_s_gain_offset + 4))
+			if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES:
+				allowed_differences.update(range(blend_offset, blend_offset + 4))
+				allowed_differences.update(
+					range(blend_code_offset, blend_code_offset + len(builder.VOICE_ONLY_BLEND_CODE))
+				)
+				allowed_differences.update(range(helper_offset, helper_end))
+				allowed_differences.update(range(classifier_offset, classifier_end))
+				allowed_differences.update(
+					range(composite_classifier_offset, composite_classifier_end)
+				)
 			assert differences <= allowed_differences
 			assert [
 				run

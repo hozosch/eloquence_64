@@ -64,6 +64,42 @@ SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x210
 SIBILANCE_FILTER_FREQUENCY = 4800.0
 SIBILANCE_FILTER_GAIN_DB = -10.0
 SIBILANCE_FILTER_MAKEUP_DB = 2.5
+HISTORICAL_SIBILANCE_LANGUAGES = frozenset({"CHS", "ENG", "ENU"})
+HISTORICAL_SIBILANCE_BLEND = 0.2
+ACTIVE_VOICE_BYPASS = bytes.fromhex("83be5318000000752131c0") + b"\x90" * 16
+# Pre-v21 tests 91/92 used the current phone's +0xac field as the stable
+# voiced/unvoiced discriminator. At this hook the phone pointer is saved at
+# esp+0x12c. It is tied to the current phone instead of the following global
+# voicing state, which can fall away at the end of short words. Keep all
+# routing variants the same length so following coefficient/state offsets stay.
+HISTORICAL_PHONE_VOICE_BYPASS = bytes.fromhex(
+	"8b94242c01000085d2740983baac00000000751631c0"
+) + b"\x90" * 5
+FILTER_ALL_SIBILANCE = b"\x31\xc0" + b"\x90" * 25
+VOICE_ONLY_BLEND_CODE = bytes.fromhex("d8642424d88d00000000d8442424")
+VOICE_ONLY_BLEND_HELPER_OFFSET = 0x9C0
+VOICE_ONLY_BLEND_HELPER_CODE = bytes.fromhex(
+	"f744242c00010000750c"
+	"d8642428d84d00d8442428c3"
+	"ddd8d9442428c3"
+)
+# English voiced sibilants are composite in the old Eloquence engine: their
+# lower component uses parallel stages 1-4 while the high frication component
+# can be presented separately as an unvoiced stage-5/6 phone.  The surrounding
+# synthesis frame exposes exact target flags for all six stages.  Use the lower
+# four target flags to associate that separately classified high component with
+# the same composite consonant, without changing a plain unvoiced s.
+SIBILANCE_CLASSIFIER_CODE = bytes.fromhex(
+	"31d283fb11740583fb12750383ca01"
+	"8b84242c01000085c0740f83b8ac00000000750681ca00010000"
+)
+SIBILANCE_CLASSIFIER_OFFSET = 0x601
+COMPOSITE_SIBILANCE_CLASSIFIER_OFFSET = 0x9E0
+COMPOSITE_SIBILANCE_CLASSIFIER_CODE = bytes.fromhex(
+	"31d283fb11740583fb12750383ca018b84243001000085c0740f83b8ac00000000750681ca0001"
+	"0000f7c2010000007436f7c200010000742e8b44241083b8e400000000751b83b8e80000000075"
+	"1283b8ec00000000750983b8f000000000740681e2fffeffffc3"
+)
 VOICED_GAIN_DB = -1.5
 EARLY_VOICED_HOOK_DELTA = 0x1965
 EARLY_VOICED_HOOK_OLD = bytes.fromhex("8b8ef3140000")
@@ -599,6 +635,21 @@ def make_sibilance_rolloff_patch(
 		raise ValueError(f"Native output EQ overlaps nonempty code in {source}")
 
 	code = bytearray(SIBILANCE_ROLLOFF_FILTER_CODE)
+	language = source.stem.upper()
+	active_voice_bypass = code.find(ACTIVE_VOICE_BYPASS)
+	if (
+		active_voice_bypass < 0
+		or code.find(ACTIVE_VOICE_BYPASS, active_voice_bypass + 1) >= 0
+	):
+		raise ValueError(f"Could not uniquely locate active-voice bypass in {source}")
+	voice_routing = (
+		HISTORICAL_PHONE_VOICE_BYPASS
+		if language in HISTORICAL_SIBILANCE_LANGUAGES
+		else FILTER_ALL_SIBILANCE
+	)
+	code[
+		active_voice_bypass : active_voice_bypass + len(ACTIVE_VOICE_BYPASS)
+	] = voice_routing
 	struct.pack_into("<5f", code, SIBILANCE_FILTER_COEFFICIENT_OFFSET, *coefficients)
 	struct.pack_into(
 		"<f",
@@ -632,6 +683,65 @@ def make_sibilance_rolloff_patch(
 		*_native_output_eq_coefficients(presence_enabled),
 	)
 	modified_append = bytearray(append_new)
+	table_suffix = append_new.find(TABLE_SUFFIX)
+	if table_suffix < 8 or append_new.find(TABLE_SUFFIX, table_suffix + 1) >= 0:
+		raise ValueError(f"Could not uniquely locate sibilance blend in {source}")
+	blend_offset = table_suffix - 8
+	if append_new[blend_offset : blend_offset + 4] != struct.pack("<f", 0.0):
+		raise ValueError(f"Native sibilance blend was not found in {source}")
+	if language in HISTORICAL_SIBILANCE_LANGUAGES:
+		struct.pack_into(
+			"<f",
+			modified_append,
+			blend_offset,
+			HISTORICAL_SIBILANCE_BLEND,
+		)
+		blend_code_offset = append_new.find(VOICE_ONLY_BLEND_CODE)
+		if (
+			blend_code_offset < 0
+			or append_new.find(VOICE_ONLY_BLEND_CODE, blend_code_offset + 1) >= 0
+		):
+			raise ValueError(f"Could not uniquely locate sibilance blend code in {source}")
+		helper_in_append = entry_in_append + VOICE_ONLY_BLEND_HELPER_OFFSET
+		helper_end = helper_in_append + len(VOICE_ONLY_BLEND_HELPER_CODE)
+		if append_new[helper_in_append:helper_end] != b"\x90" * len(
+			VOICE_ONLY_BLEND_HELPER_CODE
+		):
+			raise ValueError(f"Voiced-sibilance blend helper overlaps nonempty code in {source}")
+		blend_call = b"\xe8" + struct.pack(
+			"<i",
+			helper_in_append - (blend_code_offset + 5),
+		)
+		modified_append[
+			blend_code_offset : blend_code_offset + len(VOICE_ONLY_BLEND_CODE)
+		] = blend_call + b"\x90" * (len(VOICE_ONLY_BLEND_CODE) - len(blend_call))
+		modified_append[helper_in_append:helper_end] = VOICE_ONLY_BLEND_HELPER_CODE
+		classifier_in_append = entry_in_append + SIBILANCE_CLASSIFIER_OFFSET
+		classifier_end = classifier_in_append + len(SIBILANCE_CLASSIFIER_CODE)
+		if append_new[classifier_in_append:classifier_end] != SIBILANCE_CLASSIFIER_CODE:
+			raise ValueError(f"Original sibilance classifier was not found in {source}")
+		composite_classifier_in_append = (
+			entry_in_append + COMPOSITE_SIBILANCE_CLASSIFIER_OFFSET
+		)
+		composite_classifier_end = (
+			composite_classifier_in_append + len(COMPOSITE_SIBILANCE_CLASSIFIER_CODE)
+		)
+		if append_new[
+			composite_classifier_in_append:composite_classifier_end
+		] != b"\x90" * len(
+			COMPOSITE_SIBILANCE_CLASSIFIER_CODE
+		):
+			raise ValueError(f"Composite sibilance classifier overlaps nonempty code in {source}")
+		classifier_call = b"\xe8" + struct.pack(
+			"<i",
+			composite_classifier_in_append - (classifier_in_append + 5),
+		)
+		modified_append[classifier_in_append:classifier_end] = (
+			classifier_call + b"\x90" * (len(SIBILANCE_CLASSIFIER_CODE) - len(classifier_call))
+		)
+		modified_append[
+			composite_classifier_in_append:composite_classifier_end
+		] = COMPOSITE_SIBILANCE_CLASSIFIER_CODE
 	voiced_s_hits = []
 	search_from = 0
 	while True:

@@ -1,7 +1,9 @@
 import importlib.util
+import os
 import queue
 import struct
 import sys
+import tempfile
 import types
 import unittest
 from unittest import mock
@@ -112,6 +114,40 @@ class SampleRateModeTests(unittest.TestCase):
 		self.assertFalse(module.get_presence_contour())
 		self.assertFalse(module.set_presence_contour(False))
 		self.assertTrue(module.set_presence_contour(True))
+
+
+class EciIniPathRepairTests(unittest.TestCase):
+	def test_copied_ini_reanchors_voice_paths_to_live_addon_directory(self):
+		module = _load_client_module()
+		with tempfile.TemporaryDirectory() as root:
+			eloquence_dir = Path(root) / "portable" / "synthDrivers" / "eloquence"
+			eloquence_dir.mkdir(parents=True)
+			ini_path = eloquence_dir / "ECI.INI"
+			ini_path.write_bytes(
+				b"[1]\r\nPath=C:\\Users\\old\\ENU.SYN\r\n"
+				b"[2]\r\nPath = C:\\dummy\\chs.syn\r\nName=unchanged\r\n"
+			)
+
+			with mock.patch.object(module, "_ascii_safe_dir", return_value=str(eloquence_dir)):
+				module._sync_eci_ini_paths(str(eloquence_dir))
+
+			updated = ini_path.read_bytes().decode("latin-1")
+			self.assertIn(f"Path={os.path.join(eloquence_dir, 'ENU.SYN')}", updated)
+			self.assertIn(f"Path = {os.path.join(eloquence_dir, 'chs.syn')}", updated)
+			self.assertIn("Name=unchanged", updated)
+			self.assertNotIn(r"C:\Users\old", updated)
+
+	def test_ini_is_left_intact_without_an_ascii_safe_directory(self):
+		module = _load_client_module()
+		with tempfile.TemporaryDirectory() as root:
+			ini_path = Path(root) / "ECI.INI"
+			original = b"Path=C:\\dummy\\ENU.SYN\r\n"
+			ini_path.write_bytes(original)
+
+			with mock.patch.object(module, "_ascii_safe_dir", return_value=None):
+				module._sync_eci_ini_paths(root)
+
+			self.assertEqual(ini_path.read_bytes(), original)
 
 
 class WarmEngineReloadTests(unittest.TestCase):
