@@ -69,6 +69,10 @@ SIBILANCE_FILTER_GAIN_DB = -7.5
 SIBILANCE_FILTER_MAKEUP_DB = 1.0
 HISTORICAL_SIBILANCE_LANGUAGES = frozenset({"CHS", "ENG", "ENU"})
 HISTORICAL_SIBILANCE_BLEND = 0.2
+# Match the test sibilance balance in the separate English/Chinese voiced-S
+# table: retain more of its upper frication while lowering the main component.
+HISTORICAL_VOICED_S_BODY_GAIN_DB = -1.5
+HISTORICAL_VOICED_S_FRICATION_GAIN_DB = 1.0
 ACTIVE_VOICE_BYPASS = bytes.fromhex("83be5318000000752131c0") + b"\x90" * 16
 # Pre-v21 tests 91/92 used the current phone's +0xac field as the stable
 # voiced/unvoiced discriminator. At this hook the phone pointer is saved at
@@ -757,7 +761,24 @@ def make_sibilance_rolloff_patch(
 		raise ValueError(f"Could not uniquely locate voiced-S gain table in {source}")
 	voiced_s_gain_offset = voiced_s_hits[0]
 	unvoiced_s_gain = append_new[voiced_s_gain_offset - 4 : voiced_s_gain_offset]
-	modified_append[voiced_s_gain_offset : voiced_s_gain_offset + 4] = unvoiced_s_gain
+	frication_mix_offset = voiced_s_gain_offset + 4
+	if language in HISTORICAL_SIBILANCE_LANGUAGES:
+		unvoiced_s_gain_value = struct.unpack("<f", unvoiced_s_gain)[0]
+		frication_mix_value = struct.unpack_from("<f", append_new, frication_mix_offset)[0]
+		struct.pack_into(
+			"<f",
+			modified_append,
+			voiced_s_gain_offset,
+			unvoiced_s_gain_value * 10 ** (HISTORICAL_VOICED_S_BODY_GAIN_DB / 20.0),
+		)
+		struct.pack_into(
+			"<f",
+			modified_append,
+			frication_mix_offset,
+			frication_mix_value * 10 ** (HISTORICAL_VOICED_S_FRICATION_GAIN_DB / 20.0),
+		)
+	else:
+		modified_append[voiced_s_gain_offset : voiced_s_gain_offset + 4] = unvoiced_s_gain
 	modified_append[b6_code_in_append : b6_code_in_append + len(base_b6_code)] = (
 		_b6_bandwidth_code(b6_multiplier)
 	)
