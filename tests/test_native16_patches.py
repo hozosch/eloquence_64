@@ -423,6 +423,7 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			assert append[filter_helper_offset:filter_helper_end] == filter_helper
 			assert bytes.fromhex("8dbcc53e010000") in filter_helper
 			assert bytes.fromhex("8d8cc53e010000") in filter_helper
+			assert bytes.fromhex("85c07515") in filter_helper
 			for target_offset in (0xE4, 0xE8, 0xEC, 0xF0):
 				assert bytes.fromhex(f"83ba{target_offset:02x}00000000") in filter_helper
 			routing_call = filter_routing_site + (
@@ -761,14 +762,16 @@ def test_native_output_eq_matches_the_selected_reference_curve():
 	assert builder._native_output_eq_coefficients(True)[10:] == presence
 
 
-def test_sibilance_rolloff_moves_clarity_into_the_16khz_upper_band():
+def test_sibilance_rolloff_mixes_current_lower_stage_with_v21_2_upper_stage():
 	builder = _load_patch_builder()
 	assert builder.SIBILANCE_FILTER_FREQUENCY == 6800.0
 	assert builder.SIBILANCE_FILTER_GAIN_DB == -18.0
 	assert builder.SIBILANCE_FILTER_MAKEUP_DB == 0.0
 	assert builder.VOICED_SIBILANCE_FILTER_FREQUENCY == 4800.0
-	assert builder.VOICED_SIBILANCE_FILTER_GAIN_DB == -7.5
-	assert builder.VOICED_SIBILANCE_FILTER_MAKEUP_DB == 1.0
+	assert builder.VOICED_SIBILANCE_FILTER_GAIN_DB == -10.0
+	assert builder.VOICED_SIBILANCE_FILTER_MAKEUP_DB == 2.5
+	assert builder.HISTORICAL_VOICED_S_BODY_GAIN_DB == 0.0
+	assert builder.HISTORICAL_VOICED_S_FRICATION_GAIN_DB == 0.0
 
 	def response_db(coefficients, frequency):
 		z = cmath.exp(-2j * math.pi * frequency / 16000)
@@ -782,6 +785,7 @@ def test_sibilance_rolloff_moves_clarity_into_the_16khz_upper_band():
 		builder.SIBILANCE_FILTER_MAKEUP_DB,
 	)
 	clear_test_coefficients = builder._sibilance_filter_coefficients(4800.0, -7.5, 1.0)
+	v21_2_coefficients = builder._sibilance_filter_coefficients(4800.0, -10.0, 2.5)
 	assert 0.4 < response_db(coefficients, 4000) - response_db(clear_test_coefficients, 4000) < 0.8
 	assert 1.5 < response_db(coefficients, 4500) - response_db(clear_test_coefficients, 4500) < 2.0
 	assert 2.5 < response_db(coefficients, 5000) - response_db(clear_test_coefficients, 5000) < 3.1
@@ -794,7 +798,7 @@ def test_sibilance_rolloff_moves_clarity_into_the_16khz_upper_band():
 		builder.VOICED_SIBILANCE_FILTER_GAIN_DB,
 		builder.VOICED_SIBILANCE_FILTER_MAKEUP_DB,
 	)
-	assert voiced_coefficients == clear_test_coefficients
+	assert voiced_coefficients == v21_2_coefficients
 	assert abs(
 		response_db(coefficients, 7500)
 		- (builder.SIBILANCE_FILTER_GAIN_DB + builder.SIBILANCE_FILTER_MAKEUP_DB)
