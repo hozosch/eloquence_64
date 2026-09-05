@@ -61,12 +61,12 @@ NATIVE_OUTPUT_EQ_CODE = bytes.fromhex(
 	"020000000000803f0000803f0000803f0ad7233d0000803f000000000000000000000000000000000000803f000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
 SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x210
-SIBILANCE_FILTER_FREQUENCY = 4800.0
-# Test balance: recover part of the v21.1 upper sibilance character while
-# lowering the filtered S path as a whole instead of compensating the stronger
-# roll-off with broadband makeup gain.
-SIBILANCE_FILTER_GAIN_DB = -7.5
-SIBILANCE_FILTER_MAKEUP_DB = 1.0
+SIBILANCE_FILTER_FREQUENCY = 5900.0
+# Preserve the clearer test balance through roughly 5.5 kHz, then make the
+# upper flank fall much faster in the direction of the preferred 11 kHz plus
+# presence recording.  No broadband makeup is needed for this higher corner.
+SIBILANCE_FILTER_GAIN_DB = -15.5
+SIBILANCE_FILTER_MAKEUP_DB = 0.0
 HISTORICAL_SIBILANCE_LANGUAGES = frozenset({"CHS", "ENG", "ENU"})
 HISTORICAL_SIBILANCE_BLEND = 0.2
 # Match the test sibilance balance in the separate English/Chinese voiced-S
