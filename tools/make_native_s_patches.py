@@ -66,6 +66,9 @@ SIBILANCE_FILTER_GAIN_DB = -10.0
 SIBILANCE_FILTER_MAKEUP_DB = 2.5
 HISTORICAL_SIBILANCE_LANGUAGES = frozenset({"CHS", "ENG", "ENU"})
 HISTORICAL_SIBILANCE_BLEND = 0.2
+# Keep the v21.2 spectrum and voiced-S balance; raise only the plain unvoiced
+# sibilance table entry.
+UNVOICED_S_LEVEL_GAIN_DB = 2.0
 ACTIVE_VOICE_BYPASS = bytes.fromhex("83be5318000000752131c0") + b"\x90" * 16
 # Pre-v21 tests 91/92 used the current phone's +0xac field as the stable
 # voiced/unvoiced discriminator. At this hook the phone pointer is saved at
@@ -753,7 +756,16 @@ def make_sibilance_rolloff_patch(
 	if len(voiced_s_hits) != 1 or voiced_s_hits[0] < 4:
 		raise ValueError(f"Could not uniquely locate voiced-S gain table in {source}")
 	voiced_s_gain_offset = voiced_s_hits[0]
-	unvoiced_s_gain = append_new[voiced_s_gain_offset - 4 : voiced_s_gain_offset]
+	unvoiced_s_gain_offset = voiced_s_gain_offset - 4
+	unvoiced_s_gain = append_new[unvoiced_s_gain_offset:voiced_s_gain_offset]
+	unvoiced_s_gain_value = struct.unpack("<f", unvoiced_s_gain)[0]
+	struct.pack_into(
+		"<f",
+		modified_append,
+		unvoiced_s_gain_offset,
+		unvoiced_s_gain_value * 10 ** (UNVOICED_S_LEVEL_GAIN_DB / 20.0),
+	)
+	# v21.2 deliberately gives the voiced body the original unvoiced value.
 	modified_append[voiced_s_gain_offset : voiced_s_gain_offset + 4] = unvoiced_s_gain
 	modified_append[b6_code_in_append : b6_code_in_append + len(base_b6_code)] = (
 		_b6_bandwidth_code(b6_multiplier)

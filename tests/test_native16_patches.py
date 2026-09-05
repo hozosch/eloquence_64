@@ -318,6 +318,7 @@ def test_split_frication_patches_use_real_direct_and_parallel_branches(tmp_path)
 
 def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_gain(tmp_path):
 	builder = _load_patch_builder()
+	assert builder.UNVOICED_S_LEVEL_GAIN_DB == 2.0
 	assert len(builder.SIBILANCE_ROLLOFF_FILTER_CODE) == 672
 	assert len(builder.NATIVE_OUTPUT_EQ_CODE) == 360
 	assert struct.unpack_from(
@@ -492,9 +493,16 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			] == early_helper
 
 			voiced_s_gain_offset = reference_append.index(builder.VOICED_S_GAIN_TABLE_TAIL)
-			unvoiced_s_gain = reference_append[
-				voiced_s_gain_offset - 4 : voiced_s_gain_offset
-			]
+			unvoiced_s_gain_offset = voiced_s_gain_offset - 4
+			unvoiced_s_gain = reference_append[unvoiced_s_gain_offset:voiced_s_gain_offset]
+			unvoiced_s_gain_value = struct.unpack("<f", unvoiced_s_gain)[0]
+			expected_unvoiced_s_gain = struct.pack(
+				"<f",
+				unvoiced_s_gain_value * 10 ** (builder.UNVOICED_S_LEVEL_GAIN_DB / 20.0),
+			)
+			assert append[
+				unvoiced_s_gain_offset:voiced_s_gain_offset
+			] == expected_unvoiced_s_gain
 			assert append[
 				voiced_s_gain_offset : voiced_s_gain_offset + 4
 			] == unvoiced_s_gain
@@ -509,6 +517,9 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			allowed_differences.update(range(b6_multiplier_offset, b6_multiplier_offset + 4))
 			allowed_differences.update(
 				range(early_helper_offset, early_helper_offset + len(early_helper))
+			)
+			allowed_differences.update(
+				range(unvoiced_s_gain_offset, voiced_s_gain_offset)
 			)
 			allowed_differences.update(range(voiced_s_gain_offset, voiced_s_gain_offset + 4))
 			if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES:
