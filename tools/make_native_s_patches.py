@@ -61,12 +61,17 @@ NATIVE_OUTPUT_EQ_CODE = bytes.fromhex(
 	"020000000000803f0000803f0000803f0ad7233d0000803f000000000000000000000000000000000000803f000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
 SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x210
-SIBILANCE_FILTER_FREQUENCY = 5900.0
-# Preserve the clearer test balance through roughly 5.5 kHz, then make the
-# upper flank fall much faster in the direction of the preferred 11 kHz plus
-# presence recording.  No broadband makeup is needed for this higher corner.
-SIBILANCE_FILTER_GAIN_DB = -15.5
+SIBILANCE_FILTER_FREQUENCY = 6350.0
+# Keep the additional clarity energy higher than in the first shaped test,
+# then retain its faster upper roll-off.  Voiced sibilance selects the earlier
+# clear-test curve separately below.
+SIBILANCE_FILTER_GAIN_DB = -16.5
 SIBILANCE_FILTER_MAKEUP_DB = 0.0
+VOICED_SIBILANCE_FILTER_FREQUENCY = 4800.0
+VOICED_SIBILANCE_FILTER_GAIN_DB = -7.5
+VOICED_SIBILANCE_FILTER_MAKEUP_DB = 1.0
+VOICED_SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x230
+VOICED_SIBILANCE_FILTER_HELPER_OFFSET = 0x80
 HISTORICAL_SIBILANCE_LANGUAGES = frozenset({"CHS", "ENG", "ENU"})
 HISTORICAL_SIBILANCE_BLEND = 0.2
 # Match the test sibilance balance in the separate English/Chinese voiced-S
@@ -74,15 +79,28 @@ HISTORICAL_SIBILANCE_BLEND = 0.2
 HISTORICAL_VOICED_S_BODY_GAIN_DB = -1.5
 HISTORICAL_VOICED_S_FRICATION_GAIN_DB = 1.0
 ACTIVE_VOICE_BYPASS = bytes.fromhex("83be5318000000752131c0") + b"\x90" * 16
+FILTER_ROUTING_SITE = ACTIVE_VOICE_BYPASS + bytes.fromhex("8d950a010000eb10")
 # Pre-v21 tests 91/92 used the current phone's +0xac field as the stable
 # voiced/unvoiced discriminator. At this hook the phone pointer is saved at
-# esp+0x12c. It is tied to the current phone instead of the following global
-# voicing state, which can fall away at the end of short words. Keep all
-# routing variants the same length so following coefficient/state offsets stay.
-HISTORICAL_PHONE_VOICE_BYPASS = bytes.fromhex(
-	"8b94242c01000085d2740983baac00000000751631c0"
-) + b"\x90" * 5
-FILTER_ALL_SIBILANCE = b"\x31\xc0" + b"\x90" * 25
+# esp+0x12c. The general helper uses the earlier clear-test coefficients for a
+# voiced phone and the new higher shaped curve for an unvoiced one.
+GENERAL_DUAL_FILTER_ROUTING = bytes.fromhex("e81ffcffffeb2c") + b"\x90" * 28
+GENERAL_VOICED_FILTER_HELPER_CODE = bytes.fromhex(
+	"8b94243001000085d2741083baac000000007407"
+	"8d952a010000c38d950a010000c3"
+)
+# ENU, ENG, and CHS keep the historical voiced body bypass. Their separately
+# presented high frication component is recognized by the lower four active
+# target stages and uses the same earlier clear-test curve as other voiced S.
+HISTORICAL_DUAL_FILTER_ROUTING = bytes.fromhex(
+	"8b94242c01000085d2740983baac000000007516e80bfcffffeb18"
+) + b"\x90" * 8
+HISTORICAL_VOICED_FILTER_HELPER_CODE = bytes.fromhex(
+	"83fb11740583fb1275288b542410"
+	"83bae400000000752283bae8000000007519"
+	"83baec00000000751083baf0000000007507"
+	"8d950a010000c38d952a010000c3"
+)
 VOICE_ONLY_BLEND_CODE = bytes.fromhex("d8642424d88d00000000d8442424")
 VOICE_ONLY_BLEND_HELPER_OFFSET = 0x9C0
 VOICE_ONLY_BLEND_HELPER_CODE = bytes.fromhex(
@@ -608,6 +626,11 @@ def make_sibilance_rolloff_patch(
 		gain_db,
 		makeup_db,
 	)
+	voiced_sibilance_coefficients = _sibilance_filter_coefficients(
+		VOICED_SIBILANCE_FILTER_FREQUENCY,
+		VOICED_SIBILANCE_FILTER_GAIN_DB,
+		VOICED_SIBILANCE_FILTER_MAKEUP_DB,
+	)
 	original_size, patched_size, runs = _read_runs(source.read_bytes())
 	xflt_runtime_offset = _xflt_runtime_offset(runs, source)
 	count_runs = [
@@ -643,21 +666,32 @@ def make_sibilance_rolloff_patch(
 
 	code = bytearray(SIBILANCE_ROLLOFF_FILTER_CODE)
 	language = source.stem.upper()
-	active_voice_bypass = code.find(ACTIVE_VOICE_BYPASS)
+	filter_routing_site = code.find(FILTER_ROUTING_SITE)
 	if (
-		active_voice_bypass < 0
-		or code.find(ACTIVE_VOICE_BYPASS, active_voice_bypass + 1) >= 0
+		filter_routing_site < 0
+		or code.find(FILTER_ROUTING_SITE, filter_routing_site + 1) >= 0
 	):
-		raise ValueError(f"Could not uniquely locate active-voice bypass in {source}")
-	voice_routing = (
-		HISTORICAL_PHONE_VOICE_BYPASS
+		raise ValueError(f"Could not uniquely locate sibilance filter routing in {source}")
+	filter_routing = (
+		HISTORICAL_DUAL_FILTER_ROUTING
 		if language in HISTORICAL_SIBILANCE_LANGUAGES
-		else FILTER_ALL_SIBILANCE
+		else GENERAL_DUAL_FILTER_ROUTING
+	)
+	filter_helper = (
+		HISTORICAL_VOICED_FILTER_HELPER_CODE
+		if language in HISTORICAL_SIBILANCE_LANGUAGES
+		else GENERAL_VOICED_FILTER_HELPER_CODE
 	)
 	code[
-		active_voice_bypass : active_voice_bypass + len(ACTIVE_VOICE_BYPASS)
-	] = voice_routing
+		filter_routing_site : filter_routing_site + len(FILTER_ROUTING_SITE)
+	] = filter_routing
 	struct.pack_into("<5f", code, SIBILANCE_FILTER_COEFFICIENT_OFFSET, *coefficients)
+	struct.pack_into(
+		"<5f",
+		code,
+		VOICED_SIBILANCE_FILTER_COEFFICIENT_OFFSET,
+		*voiced_sibilance_coefficients,
+	)
 	struct.pack_into(
 		"<f",
 		code,
@@ -690,6 +724,13 @@ def make_sibilance_rolloff_patch(
 		*_native_output_eq_coefficients(presence_enabled),
 	)
 	modified_append = bytearray(append_new)
+	filter_helper_in_append = entry_in_append + VOICED_SIBILANCE_FILTER_HELPER_OFFSET
+	filter_helper_end = filter_helper_in_append + len(filter_helper)
+	if append_new[filter_helper_in_append:filter_helper_end] != b"\x90" * len(
+		filter_helper
+	):
+		raise ValueError(f"Voiced-sibilance filter helper overlaps nonempty code in {source}")
+	modified_append[filter_helper_in_append:filter_helper_end] = filter_helper
 	table_suffix = append_new.find(TABLE_SUFFIX)
 	if table_suffix < 8 or append_new.find(TABLE_SUFFIX, table_suffix + 1) >= 0:
 		raise ValueError(f"Could not uniquely locate sibilance blend in {source}")

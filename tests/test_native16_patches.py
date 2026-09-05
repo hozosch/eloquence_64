@@ -330,6 +330,11 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 		builder.SIBILANCE_ROLLOFF_FILTER_CODE,
 		builder.VOICED_GAIN_OFFSET,
 	) == (1.0,)
+	assert struct.unpack_from(
+		"<5f",
+		builder.SIBILANCE_ROLLOFF_FILTER_CODE,
+		builder.VOICED_SIBILANCE_FILTER_COEFFICIENT_OFFSET,
+	) == (0.0, 0.0, 0.0, 0.0, 0.0)
 	for reference in sorted(PATCH_DIR.glob("*.p16st")):
 		_original_size, _patched_size, reference_runs = builder._read_runs(reference.read_bytes())
 		for suffix, presence_enabled in ((".p16s0", False), (".p16s1", True)):
@@ -359,25 +364,36 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			assert struct.unpack_from("<f", append, b6_multiplier_offset)[0] == 4.5
 			code_offset = entry + builder.SPLIT_FILTER_BLOCK_OFFSET
 			expected_code = bytearray(builder.SIBILANCE_ROLLOFF_FILTER_CODE)
-			active_voice_bypass = expected_code.index(builder.ACTIVE_VOICE_BYPASS)
-			voice_routing = (
-				builder.HISTORICAL_PHONE_VOICE_BYPASS
+			filter_routing_site = expected_code.index(builder.FILTER_ROUTING_SITE)
+			filter_routing = (
+				builder.HISTORICAL_DUAL_FILTER_ROUTING
 				if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES
-				else builder.FILTER_ALL_SIBILANCE
+				else builder.GENERAL_DUAL_FILTER_ROUTING
 			)
 			expected_code[
-				active_voice_bypass : active_voice_bypass + len(builder.ACTIVE_VOICE_BYPASS)
-			] = voice_routing
+				filter_routing_site : filter_routing_site + len(builder.FILTER_ROUTING_SITE)
+			] = filter_routing
 			coefficients = builder._sibilance_filter_coefficients(
 				builder.SIBILANCE_FILTER_FREQUENCY,
 				builder.SIBILANCE_FILTER_GAIN_DB,
 				builder.SIBILANCE_FILTER_MAKEUP_DB,
+			)
+			voiced_sibilance_coefficients = builder._sibilance_filter_coefficients(
+				builder.VOICED_SIBILANCE_FILTER_FREQUENCY,
+				builder.VOICED_SIBILANCE_FILTER_GAIN_DB,
+				builder.VOICED_SIBILANCE_FILTER_MAKEUP_DB,
 			)
 			struct.pack_into(
 				"<5f",
 				expected_code,
 				builder.SIBILANCE_FILTER_COEFFICIENT_OFFSET,
 				*coefficients,
+			)
+			struct.pack_into(
+				"<5f",
+				expected_code,
+				builder.VOICED_SIBILANCE_FILTER_COEFFICIENT_OFFSET,
+				*voiced_sibilance_coefficients,
 			)
 			struct.pack_into(
 				"<f",
@@ -390,6 +406,25 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 				b"\x90" * len(builder.NATIVE_EQ_RESET_CALL)
 			)
 			assert append[code_offset : code_offset + len(expected_code)] == expected_code
+			filter_helper_offset = entry + builder.VOICED_SIBILANCE_FILTER_HELPER_OFFSET
+			filter_helper = (
+				builder.HISTORICAL_VOICED_FILTER_HELPER_CODE
+				if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES
+				else builder.GENERAL_VOICED_FILTER_HELPER_CODE
+			)
+			filter_helper_end = filter_helper_offset + len(filter_helper)
+			assert append[filter_helper_offset:filter_helper_end] == filter_helper
+			routing_call = filter_routing_site + (
+				20 if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES else 0
+			)
+			assert expected_code[routing_call] == 0xE8
+			assert (
+				code_offset
+				+ routing_call
+				+ 5
+				+ struct.unpack_from("<i", expected_code, routing_call + 1)[0]
+				== filter_helper_offset
+			)
 			table_suffix = reference_append.index(builder.TABLE_SUFFIX)
 			blend_offset = table_suffix - 8
 			expected_blend = (
@@ -419,8 +454,8 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 				composite_classifier_offset + len(builder.COMPOSITE_SIBILANCE_CLASSIFIER_CODE)
 			)
 			if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES:
-				assert builder.ACTIVE_VOICE_BYPASS not in expected_code
-				assert builder.HISTORICAL_PHONE_VOICE_BYPASS in expected_code
+				assert builder.FILTER_ROUTING_SITE not in expected_code
+				assert builder.HISTORICAL_DUAL_FILTER_ROUTING in expected_code
 				blend_call = b"\xe8" + struct.pack(
 					"<i", helper_offset - (blend_code_offset + 5)
 				)
@@ -442,9 +477,9 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 					== builder.COMPOSITE_SIBILANCE_CLASSIFIER_CODE
 				)
 			else:
-				assert builder.ACTIVE_VOICE_BYPASS not in expected_code
-				assert builder.HISTORICAL_PHONE_VOICE_BYPASS not in expected_code
-				assert builder.FILTER_ALL_SIBILANCE in expected_code
+				assert builder.FILTER_ROUTING_SITE not in expected_code
+				assert builder.HISTORICAL_DUAL_FILTER_ROUTING not in expected_code
+				assert builder.GENERAL_DUAL_FILTER_ROUTING in expected_code
 				assert append[
 					blend_code_offset : blend_code_offset + len(builder.VOICE_ONLY_BLEND_CODE)
 				] == builder.VOICE_ONLY_BLEND_CODE
@@ -535,6 +570,7 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			allowed_differences.update(
 				range(early_helper_offset, early_helper_offset + len(early_helper))
 			)
+			allowed_differences.update(range(filter_helper_offset, filter_helper_end))
 			allowed_differences.update(range(voiced_s_gain_offset, voiced_s_gain_offset + 4))
 			if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES:
 				allowed_differences.update(range(frication_mix_offset, frication_mix_offset + 4))
@@ -714,11 +750,14 @@ def test_native_output_eq_matches_the_selected_reference_curve():
 	assert builder._native_output_eq_coefficients(True)[10:] == presence
 
 
-def test_sibilance_rolloff_keeps_clarity_then_steepens_the_upper_flank():
+def test_sibilance_rolloff_moves_clarity_higher_then_steepens_the_upper_flank():
 	builder = _load_patch_builder()
-	assert builder.SIBILANCE_FILTER_FREQUENCY == 5900.0
-	assert builder.SIBILANCE_FILTER_GAIN_DB == -15.5
+	assert builder.SIBILANCE_FILTER_FREQUENCY == 6350.0
+	assert builder.SIBILANCE_FILTER_GAIN_DB == -16.5
 	assert builder.SIBILANCE_FILTER_MAKEUP_DB == 0.0
+	assert builder.VOICED_SIBILANCE_FILTER_FREQUENCY == 4800.0
+	assert builder.VOICED_SIBILANCE_FILTER_GAIN_DB == -7.5
+	assert builder.VOICED_SIBILANCE_FILTER_MAKEUP_DB == 1.0
 
 	def response_db(coefficients, frequency):
 		z = cmath.exp(-2j * math.pi * frequency / 16000)
@@ -732,19 +771,23 @@ def test_sibilance_rolloff_keeps_clarity_then_steepens_the_upper_flank():
 		builder.SIBILANCE_FILTER_MAKEUP_DB,
 	)
 	clear_test_coefficients = builder._sibilance_filter_coefficients(4800.0, -7.5, 1.0)
-	for frequency in (4000, 4500, 5000):
-		assert abs(
-			response_db(coefficients, frequency)
-			- response_db(clear_test_coefficients, frequency)
-		) < 0.35
-	assert abs(response_db(coefficients, 5500) - response_db(clear_test_coefficients, 5500)) < 0.7
-	assert response_db(coefficients, 6000) < response_db(clear_test_coefficients, 6000) - 2.5
-	assert response_db(coefficients, 6500) < response_db(clear_test_coefficients, 6500) - 5.5
-	assert response_db(coefficients, 7000) < response_db(clear_test_coefficients, 7000) - 8.0
+	assert 0.2 < response_db(coefficients, 4000) - response_db(clear_test_coefficients, 4000) < 0.7
+	assert 1.0 < response_db(coefficients, 4500) - response_db(clear_test_coefficients, 4500) < 1.4
+	assert 1.5 < response_db(coefficients, 5000) - response_db(clear_test_coefficients, 5000) < 2.0
+	assert 1.5 < response_db(coefficients, 5500) - response_db(clear_test_coefficients, 5500) < 2.0
+	assert abs(response_db(coefficients, 6000) - response_db(clear_test_coefficients, 6000)) < 0.2
+	assert response_db(coefficients, 6500) < response_db(clear_test_coefficients, 6500) - 3.0
+	assert response_db(coefficients, 7000) < response_db(clear_test_coefficients, 7000) - 7.0
+	voiced_coefficients = builder._sibilance_filter_coefficients(
+		builder.VOICED_SIBILANCE_FILTER_FREQUENCY,
+		builder.VOICED_SIBILANCE_FILTER_GAIN_DB,
+		builder.VOICED_SIBILANCE_FILTER_MAKEUP_DB,
+	)
+	assert voiced_coefficients == clear_test_coefficients
 	assert abs(
 		response_db(coefficients, 7500)
 		- (builder.SIBILANCE_FILTER_GAIN_DB + builder.SIBILANCE_FILTER_MAKEUP_DB)
-	) < 0.1
+	) < 0.25
 
 
 def test_targeted_spectral_pivot_raises_lows_and_rolls_off_upper_frication():
