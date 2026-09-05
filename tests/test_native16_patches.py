@@ -761,7 +761,7 @@ def test_native_output_eq_matches_the_selected_reference_curve():
 	assert builder._native_output_eq_coefficients(True)[10:] == presence
 
 
-def test_sibilance_rolloff_moves_clarity_higher_then_steepens_the_upper_flank():
+def test_sibilance_rolloff_moves_clarity_into_the_16khz_upper_band():
 	builder = _load_patch_builder()
 	assert builder.SIBILANCE_FILTER_FREQUENCY == 6800.0
 	assert builder.SIBILANCE_FILTER_GAIN_DB == -18.0
