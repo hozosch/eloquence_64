@@ -319,6 +319,7 @@ def test_split_frication_patches_use_real_direct_and_parallel_branches(tmp_path)
 def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_gain(tmp_path):
 	builder = _load_patch_builder()
 	assert builder.HISTORICAL_SIBILANCE_BLEND == 1.0
+	assert builder.HISTORICAL_VOICED_S_FRICATION_GAIN_DB == -3.0
 	assert len(builder.SIBILANCE_ROLLOFF_FILTER_CODE) == 672
 	assert len(builder.NATIVE_OUTPUT_EQ_CODE) == 360
 	assert struct.unpack_from(
@@ -499,6 +500,19 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			assert append[
 				voiced_s_gain_offset : voiced_s_gain_offset + 4
 			] == unvoiced_s_gain
+			frication_mix_offset = voiced_s_gain_offset + 4
+			if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES:
+				frication_mix_value = struct.unpack_from(
+					"<f", reference_append, frication_mix_offset
+				)[0]
+				expected_frication_mix = struct.pack(
+					"<f",
+					frication_mix_value
+					* 10 ** (builder.HISTORICAL_VOICED_S_FRICATION_GAIN_DB / 20.0),
+				)
+				assert append[
+					frication_mix_offset : frication_mix_offset + 4
+				] == expected_frication_mix
 			differences = {
 				i for i, pair in enumerate(zip(append, reference_append)) if pair[0] != pair[1]
 			}
@@ -513,6 +527,9 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			)
 			allowed_differences.update(range(voiced_s_gain_offset, voiced_s_gain_offset + 4))
 			if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES:
+				allowed_differences.update(
+					range(frication_mix_offset, frication_mix_offset + 4)
+				)
 				allowed_differences.update(range(blend_offset, blend_offset + 4))
 				allowed_differences.update(
 					range(blend_code_offset, blend_code_offset + len(builder.VOICE_ONLY_BLEND_CODE))

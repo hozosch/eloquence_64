@@ -72,6 +72,9 @@ HISTORICAL_SIBILANCE_LANGUAGES = frozenset({"CHS", "ENG", "ENU"})
 # frication result as a plain unvoiced S instead of retaining 80% of the old
 # native frication path.
 HISTORICAL_SIBILANCE_BLEND = 1.0
+# Diagnostic A: keep the fully aligned frication spectrum, but lower only its
+# level in the English/Chinese composite voiced-S path.
+HISTORICAL_VOICED_S_FRICATION_GAIN_DB = -3.0
 ACTIVE_VOICE_BYPASS = bytes.fromhex("83be5318000000752131c0") + b"\x90" * 16
 # Pre-v21 tests 91/92 used the current phone's +0xac field as the stable
 # voiced/unvoiced discriminator. At this hook the phone pointer is saved at
@@ -761,6 +764,15 @@ def make_sibilance_rolloff_patch(
 	voiced_s_gain_offset = voiced_s_hits[0]
 	unvoiced_s_gain = append_new[voiced_s_gain_offset - 4 : voiced_s_gain_offset]
 	modified_append[voiced_s_gain_offset : voiced_s_gain_offset + 4] = unvoiced_s_gain
+	if language in HISTORICAL_SIBILANCE_LANGUAGES:
+		frication_mix_offset = voiced_s_gain_offset + 4
+		frication_mix_value = struct.unpack_from("<f", append_new, frication_mix_offset)[0]
+		struct.pack_into(
+			"<f",
+			modified_append,
+			frication_mix_offset,
+			frication_mix_value * 10 ** (HISTORICAL_VOICED_S_FRICATION_GAIN_DB / 20.0),
+		)
 	modified_append[b6_code_in_append : b6_code_in_append + len(base_b6_code)] = (
 		_b6_bandwidth_code(b6_multiplier)
 	)
