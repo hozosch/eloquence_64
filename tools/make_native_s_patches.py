@@ -62,8 +62,11 @@ NATIVE_OUTPUT_EQ_CODE = bytes.fromhex(
 )
 SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x210
 SIBILANCE_FILTER_FREQUENCY = 4800.0
-SIBILANCE_FILTER_GAIN_DB = -10.0
-SIBILANCE_FILTER_MAKEUP_DB = 2.5
+# Test balance: recover part of the v21.1 upper sibilance character while
+# lowering the filtered S path as a whole instead of compensating the stronger
+# roll-off with broadband makeup gain.
+SIBILANCE_FILTER_GAIN_DB = -7.5
+SIBILANCE_FILTER_MAKEUP_DB = 1.0
 HISTORICAL_SIBILANCE_LANGUAGES = frozenset({"CHS", "ENG", "ENU"})
 HISTORICAL_SIBILANCE_BLEND = 0.2
 ACTIVE_VOICE_BYPASS = bytes.fromhex("83be5318000000752131c0") + b"\x90" * 16
