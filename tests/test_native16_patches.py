@@ -335,6 +335,13 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 		builder.SIBILANCE_ROLLOFF_FILTER_CODE,
 		builder.VOICED_SIBILANCE_FILTER_COEFFICIENT_OFFSET,
 	) == (0.0, 0.0, 0.0, 0.0, 0.0)
+	assert (
+		builder.SIBILANCE_ROLLOFF_FILTER_CODE[
+			builder.VOICED_SIBILANCE_FILTER_STATE_OFFSET : builder.VOICED_SIBILANCE_FILTER_STATE_OFFSET
+			+ 16
+		]
+		== b"\x00" * 16
+	)
 	for reference in sorted(PATCH_DIR.glob("*.p16st")):
 		_original_size, _patched_size, reference_runs = builder._read_runs(reference.read_bytes())
 		for suffix, presence_enabled in ((".p16s0", False), (".p16s1", True)):
@@ -414,6 +421,10 @@ def test_sibilance_rolloff_patches_use_native_output_eq_and_fixed_voiced_path_ga
 			)
 			filter_helper_end = filter_helper_offset + len(filter_helper)
 			assert append[filter_helper_offset:filter_helper_end] == filter_helper
+			assert bytes.fromhex("8dbcc53e010000") in filter_helper
+			assert bytes.fromhex("8d8cc53e010000") in filter_helper
+			for target_offset in (0xE4, 0xE8, 0xEC, 0xF0):
+				assert bytes.fromhex(f"83ba{target_offset:02x}00000000") in filter_helper
 			routing_call = filter_routing_site + (
 				20 if reference.stem.upper() in builder.HISTORICAL_SIBILANCE_LANGUAGES else 0
 			)
@@ -752,8 +763,8 @@ def test_native_output_eq_matches_the_selected_reference_curve():
 
 def test_sibilance_rolloff_moves_clarity_higher_then_steepens_the_upper_flank():
 	builder = _load_patch_builder()
-	assert builder.SIBILANCE_FILTER_FREQUENCY == 6350.0
-	assert builder.SIBILANCE_FILTER_GAIN_DB == -16.5
+	assert builder.SIBILANCE_FILTER_FREQUENCY == 6800.0
+	assert builder.SIBILANCE_FILTER_GAIN_DB == -18.0
 	assert builder.SIBILANCE_FILTER_MAKEUP_DB == 0.0
 	assert builder.VOICED_SIBILANCE_FILTER_FREQUENCY == 4800.0
 	assert builder.VOICED_SIBILANCE_FILTER_GAIN_DB == -7.5
@@ -771,13 +782,13 @@ def test_sibilance_rolloff_moves_clarity_higher_then_steepens_the_upper_flank():
 		builder.SIBILANCE_FILTER_MAKEUP_DB,
 	)
 	clear_test_coefficients = builder._sibilance_filter_coefficients(4800.0, -7.5, 1.0)
-	assert 0.2 < response_db(coefficients, 4000) - response_db(clear_test_coefficients, 4000) < 0.7
-	assert 1.0 < response_db(coefficients, 4500) - response_db(clear_test_coefficients, 4500) < 1.4
-	assert 1.5 < response_db(coefficients, 5000) - response_db(clear_test_coefficients, 5000) < 2.0
-	assert 1.5 < response_db(coefficients, 5500) - response_db(clear_test_coefficients, 5500) < 2.0
-	assert abs(response_db(coefficients, 6000) - response_db(clear_test_coefficients, 6000)) < 0.2
-	assert response_db(coefficients, 6500) < response_db(clear_test_coefficients, 6500) - 3.0
-	assert response_db(coefficients, 7000) < response_db(clear_test_coefficients, 7000) - 7.0
+	assert 0.4 < response_db(coefficients, 4000) - response_db(clear_test_coefficients, 4000) < 0.8
+	assert 1.5 < response_db(coefficients, 4500) - response_db(clear_test_coefficients, 4500) < 2.0
+	assert 2.5 < response_db(coefficients, 5000) - response_db(clear_test_coefficients, 5000) < 3.1
+	assert 3.2 < response_db(coefficients, 5500) - response_db(clear_test_coefficients, 5500) < 3.8
+	assert 2.7 < response_db(coefficients, 6000) - response_db(clear_test_coefficients, 6000) < 3.3
+	assert abs(response_db(coefficients, 6500) - response_db(clear_test_coefficients, 6500)) < 0.5
+	assert response_db(coefficients, 7000) < response_db(clear_test_coefficients, 7000) - 4.5
 	voiced_coefficients = builder._sibilance_filter_coefficients(
 		builder.VOICED_SIBILANCE_FILTER_FREQUENCY,
 		builder.VOICED_SIBILANCE_FILTER_GAIN_DB,
@@ -787,7 +798,7 @@ def test_sibilance_rolloff_moves_clarity_higher_then_steepens_the_upper_flank():
 	assert abs(
 		response_db(coefficients, 7500)
 		- (builder.SIBILANCE_FILTER_GAIN_DB + builder.SIBILANCE_FILTER_MAKEUP_DB)
-	) < 0.25
+	) < 1.0
 
 
 def test_targeted_spectral_pivot_raises_lows_and_rolls_off_upper_frication():

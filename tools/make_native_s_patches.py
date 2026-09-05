@@ -61,16 +61,17 @@ NATIVE_OUTPUT_EQ_CODE = bytes.fromhex(
 	"020000000000803f0000803f0000803f0ad7233d0000803f000000000000000000000000000000000000803f000000000000000000000000000000000000803f00000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
 SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x210
-SIBILANCE_FILTER_FREQUENCY = 6350.0
-# Keep the additional clarity energy higher than in the first shaped test,
-# then retain its faster upper roll-off.  Voiced sibilance selects the earlier
-# clear-test curve separately below.
-SIBILANCE_FILTER_GAIN_DB = -16.5
+SIBILANCE_FILTER_FREQUENCY = 6800.0
+# Move the additional clarity energy higher than in the second shaped test,
+# while retaining its faster upper roll-off. Voiced sibilance selects the
+# earlier clear-test curve separately below.
+SIBILANCE_FILTER_GAIN_DB = -18.0
 SIBILANCE_FILTER_MAKEUP_DB = 0.0
 VOICED_SIBILANCE_FILTER_FREQUENCY = 4800.0
 VOICED_SIBILANCE_FILTER_GAIN_DB = -7.5
 VOICED_SIBILANCE_FILTER_MAKEUP_DB = 1.0
 VOICED_SIBILANCE_FILTER_COEFFICIENT_OFFSET = 0x230
+VOICED_SIBILANCE_FILTER_STATE_OFFSET = 0x244
 VOICED_SIBILANCE_FILTER_HELPER_OFFSET = 0x80
 HISTORICAL_SIBILANCE_LANGUAGES = frozenset({"CHS", "ENG", "ENU"})
 HISTORICAL_SIBILANCE_BLEND = 0.2
@@ -81,13 +82,19 @@ HISTORICAL_VOICED_S_FRICATION_GAIN_DB = 1.0
 ACTIVE_VOICE_BYPASS = bytes.fromhex("83be5318000000752131c0") + b"\x90" * 16
 FILTER_ROUTING_SITE = ACTIVE_VOICE_BYPASS + bytes.fromhex("8d950a010000eb10")
 # Pre-v21 tests 91/92 used the current phone's +0xac field as the stable
-# voiced/unvoiced discriminator. At this hook the phone pointer is saved at
-# esp+0x12c. The general helper uses the earlier clear-test coefficients for a
-# voiced phone and the new higher shaped curve for an unvoiced one.
+# voiced/unvoiced discriminator. A voiced sibilant also has a separately
+# presented high component, which is classified as unvoiced by itself. Detect
+# that component from the active lower target stages in every language. Keep
+# independent filter states for the two curves so their histories cannot leak
+# into each other across a consonant boundary.
 GENERAL_DUAL_FILTER_ROUTING = bytes.fromhex("e81ffcffffeb2c") + b"\x90" * 28
 GENERAL_VOICED_FILTER_HELPER_CODE = bytes.fromhex(
-	"8b94243001000085d2741083baac000000007407"
-	"8d952a010000c38d950a010000c3"
+	"8b94243001000085d2740983baac000000007547"
+	"83fb11740583fb1275288b542410"
+	"83bae400000000753083bae8000000007527"
+	"83baec00000000751e83baf0000000007515"
+	"8d8cc53e01000031d289118951048d950a010000c3"
+	"31c9890f894f048dbcc53e0100008d952a010000c3"
 )
 # ENU, ENG, and CHS keep the historical voiced body bypass. Their separately
 # presented high frication component is recognized by the lower four active
@@ -97,9 +104,10 @@ HISTORICAL_DUAL_FILTER_ROUTING = bytes.fromhex(
 ) + b"\x90" * 8
 HISTORICAL_VOICED_FILTER_HELPER_CODE = bytes.fromhex(
 	"83fb11740583fb1275288b542410"
-	"83bae400000000752283bae8000000007519"
-	"83baec00000000751083baf0000000007507"
-	"8d950a010000c38d952a010000c3"
+	"83bae400000000753083bae8000000007527"
+	"83baec00000000751e83baf0000000007515"
+	"8d8cc53e01000031d289118951048d950a010000c3"
+	"31c9890f894f048dbcc53e0100008d952a010000c3"
 )
 VOICE_ONLY_BLEND_CODE = bytes.fromhex("d8642424d88d00000000d8442424")
 VOICE_ONLY_BLEND_HELPER_OFFSET = 0x9C0
