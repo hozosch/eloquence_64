@@ -688,10 +688,11 @@ def test_native_output_eq_matches_the_selected_reference_curve():
 	assert builder._native_output_eq_coefficients(True)[10:] == presence
 
 
-def test_sibilance_rolloff_moves_mildly_toward_native_v21():
+def test_sibilance_rolloff_moves_the_shaped_curve_higher():
 	builder = _load_patch_builder()
-	assert builder.SIBILANCE_FILTER_GAIN_DB == -10.0
-	assert builder.SIBILANCE_FILTER_MAKEUP_DB == 2.5
+	assert builder.SIBILANCE_FILTER_FREQUENCY == 7100.0
+	assert builder.SIBILANCE_FILTER_GAIN_DB == -20.0
+	assert builder.SIBILANCE_FILTER_MAKEUP_DB == 0.0
 
 	def response_db(coefficients, frequency):
 		z = cmath.exp(-2j * math.pi * frequency / 16000)
@@ -704,10 +705,14 @@ def test_sibilance_rolloff_moves_mildly_toward_native_v21():
 		builder.SIBILANCE_FILTER_GAIN_DB,
 		builder.SIBILANCE_FILTER_MAKEUP_DB,
 	)
-	assert abs(response_db(coefficients, 4000)) < 0.2
-	assert response_db(coefficients, 3000) > 0.8
+	preceding_shaped_coefficients = builder._sibilance_filter_coefficients(6800.0, -18.0, 0.0)
+	assert abs(response_db(coefficients, 4000)) < 0.1
+	assert response_db(coefficients, 6000) > response_db(preceding_shaped_coefficients, 6000) + 1.3
+	assert response_db(coefficients, 6500) > response_db(preceding_shaped_coefficients, 6500) + 2.4
+	assert response_db(coefficients, 7000) > response_db(preceding_shaped_coefficients, 7000) + 2.8
+	assert abs(response_db(coefficients, 7500) - response_db(preceding_shaped_coefficients, 7500)) < 0.1
 	assert abs(
-		response_db(coefficients, 7500)
+		response_db(coefficients, 7900)
 		- (builder.SIBILANCE_FILTER_GAIN_DB + builder.SIBILANCE_FILTER_MAKEUP_DB)
 	) < 0.1
 
