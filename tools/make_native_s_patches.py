@@ -68,10 +68,9 @@ SIBILANCE_FILTER_FREQUENCY = 7100.0
 SIBILANCE_FILTER_GAIN_DB = -20.0
 SIBILANCE_FILTER_MAKEUP_DB = 0.0
 HISTORICAL_SIBILANCE_LANGUAGES = frozenset({"CHS", "ENG", "ENU"})
-# Once the composite voiced S has been identified, use the same shaped
-# frication result as a plain unvoiced S instead of retaining 80% of the old
-# native frication path.
-HISTORICAL_SIBILANCE_BLEND = 1.0
+# Diagnostic B: leave the voiced-S gain table untouched and test an even
+# balance between the native and shaped frication spectra.
+HISTORICAL_SIBILANCE_BLEND = 0.5
 ACTIVE_VOICE_BYPASS = bytes.fromhex("83be5318000000752131c0") + b"\x90" * 16
 # Pre-v21 tests 91/92 used the current phone's +0xac field as the stable
 # voiced/unvoiced discriminator. At this hook the phone pointer is saved at
