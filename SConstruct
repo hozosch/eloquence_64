@@ -14,6 +14,10 @@ sys.dont_write_bytecode = True
 
 import buildVars  # noqa: E402
 
+# Reused rather than reimplemented so the build and the fetcher cannot disagree
+# about what counts as a loadable 64-bit engine.
+from fetch_eci import _is_pe32_plus as is_pe32_plus  # noqa: E402
+
 env = Environment(ENV=os.environ, tools=["NVDATool"])
 env.Append(addon_info=buildVars.addon_info)
 env.Append(**buildVars.addon_info)
@@ -22,6 +26,7 @@ env.Append(**buildVars.addon_info)
 env["excludePatterns"] = (
 	"**/__pycache__/*",
 	"**/*.pyc",
+	"**/*.pyo",
 	"synthDrivers/eloquence/*.p16",
 	"synthDrivers/eloquence/*.p16n",
 	"synthDrivers/eloquence/*.p16b*",
@@ -45,10 +50,11 @@ for po in poFiles:
 # --- Validate required binaries and native-16 patches ----------------------
 
 eci_dir = addonDir / "synthDrivers" / "eloquence"
-host_exes = (
-	addonDir / "synthDrivers" / "eloquence_host32" / "eloquence_host32.exe",
-	addonDir / "synthDrivers" / "eloquence_host32.exe",
-)
+# The Eloquence Host Process ships as a PyInstaller onedir tree, so the exe is
+# only runnable alongside the rest of its directory.
+host_dir = addonDir / "synthDrivers" / "eloquence_host32"
+host_exe = host_dir / "eloquence_host32.exe"
+
 voice_names = ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB")
 patch_names = ("DEU", "ENG", "ENU", "ESM", "ESP", "FIN", "FRA", "FRC", "ITA", "PTB", "chs", "jpn", "kor")
 required_proprietary = [eci_dir / "ECI.DLL"] + [eci_dir / f"{name}.SYN" for name in voice_names]
@@ -77,10 +83,38 @@ if missing_patches:
 	)
 	Exit(1)
 
-if not any(host_exe.exists() for host_exe in host_exes):
+if not host_exe.exists():
 	print(
 		"ERROR: No 32-bit Eloquence host found.\n"
 		"Run `build_host.cmd` to compile the host directory first.",
+		file=sys.stderr,
+	)
+	Exit(1)
+
+if not (host_dir / "_internal").is_dir():
+	print(
+		f"ERROR: {host_dir} has no _internal directory.\n"
+		"It looks like a stale onefile build. Re-run `build_host.cmd`.",
+		file=sys.stderr,
+	)
+	Exit(1)
+
+# The openevv engine the Synth Driver side loads in NVDA's own process.
+openevv_dll = addonDir / "synthDrivers" / "openevv" / "eci.dll"
+if not openevv_dll.exists():
+	print(
+		f"ERROR: {openevv_dll} not found.\nRun `python fetch_eci.py` to download the openevv engine.",
+		file=sys.stderr,
+	)
+	Exit(1)
+
+if not is_pe32_plus(openevv_dll):
+	# A 32-bit DLL here would build a perfectly valid add-on that then fails to
+	# load the engine at synth start-up with nothing but an OSError, so this is
+	# worth catching while there is still somewhere useful to say it.
+	print(
+		f"ERROR: {openevv_dll} is not a 64-bit PE image.\n"
+		"64-bit NVDA cannot load it. Re-run `python fetch_eci.py --force`.",
 		file=sys.stderr,
 	)
 	Exit(1)

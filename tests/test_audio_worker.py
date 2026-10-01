@@ -66,13 +66,10 @@ class FakePlayer:
 		self.sync()
 
 
-class FakeClient:
-	_sequence = 0
+class FakePipeline:
+	"""Stands in for the shared AudioPipeline; only the generation is read."""
 
-
-class FakeHostProcess:
-	def poll(self):
-		return None
+	sequence = 0
 
 
 class SampleRateModeTests(unittest.TestCase):
@@ -115,6 +112,18 @@ class SampleRateModeTests(unittest.TestCase):
 		self.assertFalse(module.set_presence_contour(False))
 		self.assertTrue(module.set_presence_contour(True))
 
+	def test_shared_audio_pipeline_uses_the_selected_engine_rate(self):
+		module = _load_client_module()
+		module.config.conf = {"audio": {"outputDevice": "default"}}
+		module._current_sample_rate_mode = 4
+		player = mock.Mock()
+		with mock.patch.object(module.nvwave, "WavePlayer", return_value=player) as wave_player:
+			with mock.patch.object(module, "AudioWorker") as worker:
+				pipeline = module.AudioPipeline()
+				pipeline.initialize_audio()
+		wave_player.assert_called_once_with(1, 16000, 16, outputDevice="default")
+		worker.assert_called_once_with(player, pipeline.queue, pipeline)
+
 
 class EciIniPathRepairTests(unittest.TestCase):
 	def test_copied_ini_reanchors_voice_paths_to_live_addon_directory(self):
@@ -148,28 +157,6 @@ class EciIniPathRepairTests(unittest.TestCase):
 				module._sync_eci_ini_paths(root)
 
 			self.assertEqual(ini_path.read_bytes(), original)
-
-
-class WarmEngineReloadTests(unittest.TestCase):
-	def test_unload_engine_keeps_supported_host(self):
-		module = _load_client_module()
-		client = module.EloquenceHostClient()
-		client._host = types.SimpleNamespace(process=FakeHostProcess())
-		client.close_audio = mock.Mock()
-		client.send_command = mock.Mock(return_value={"status": "ok"})
-
-		self.assertTrue(client.unload_engine())
-		client.close_audio.assert_called_once_with()
-		client.send_command.assert_called_once_with("unload")
-
-	def test_unload_engine_rejects_legacy_host(self):
-		module = _load_client_module()
-		client = module.EloquenceHostClient()
-		client._host = types.SimpleNamespace(process=FakeHostProcess())
-		client.close_audio = mock.Mock()
-		client.send_command = mock.Mock(side_effect=RuntimeError("unknownCommand"))
-
-		self.assertFalse(client.unload_engine())
 
 
 class AudioWorkerTests(unittest.TestCase):
@@ -220,7 +207,7 @@ class AudioWorkerTests(unittest.TestCase):
 		audio_queue.put((b"", 42, False, 0))
 		audio_queue.put(None)
 		player = FakePlayer(events)
-		worker = module.AudioWorker(player, audio_queue, FakeClient())
+		worker = module.AudioWorker(player, audio_queue, FakePipeline())
 
 		worker.run()
 
@@ -244,7 +231,7 @@ class AudioWorkerTests(unittest.TestCase):
 		audio_queue.put(None)
 		player = FakePlayer(events)
 
-		module.AudioWorker(player, audio_queue, FakeClient()).run()
+		module.AudioWorker(player, audio_queue, FakePipeline()).run()
 
 		self.assertEqual(events, [("feed", first), ("feed", last)])
 		self.assertEqual(len(player.on_done), 1)
@@ -263,7 +250,7 @@ class AudioWorkerTests(unittest.TestCase):
 		audio_queue.put(None)
 		player = FakePlayer(events)
 
-		module.AudioWorker(player, audio_queue, FakeClient()).run()
+		module.AudioWorker(player, audio_queue, FakePipeline()).run()
 
 		self.assertLess(events.index(("feed", audio)), events.index(("index", 42)))
 		self.assertLess(events.index(("index", 42)), events.index(("index", None)))

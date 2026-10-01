@@ -51,6 +51,7 @@ class _FakeClient:
 		self.commands = []
 		self._sequence = 0
 		self._player = None
+		self.started = True
 
 	def send_command(self, command, wait=True, **payload):
 		self.commands.append((command, payload))
@@ -68,7 +69,11 @@ DEU = 262144
 class TempProsodyAcrossVoiceSwitchTests(unittest.TestCase):
 	def setUp(self):
 		self.client = _FakeClient()
+		# Both, because routing sends commands to _active while cancellation
+		# sweeps every started backend.
 		_eloquence._client = self.client
+		_eloquence._active = self.client
+		_eloquence._direct_client = None
 		_eloquence._active_temp_prosody.clear()
 		_eloquence.voice_params.clear()
 		_eloquence.voice_params.update(
@@ -112,8 +117,7 @@ class TempProsodyAcrossVoiceSwitchTests(unittest.TestCase):
 		self.assertEqual(
 			values[-1],
 			(BASE_PITCH, False),
-			"after a prosody revert the language change must leave pitch at "
-			"base: %r" % values,
+			"after a prosody revert the language change must leave pitch at base: %r" % values,
 		)
 
 	def test_stop_clears_pending_prosody(self):
@@ -125,8 +129,7 @@ class TempProsodyAcrossVoiceSwitchTests(unittest.TestCase):
 		self.assertEqual(
 			values[-1],
 			(BASE_PITCH, False),
-			"cancelled speech must not leak its temporary pitch into the "
-			"next voice switch: %r" % values,
+			"cancelled speech must not leak its temporary pitch into the next voice switch: %r" % values,
 		)
 
 	def test_reapplied_pitch_clamped_to_param_max(self):

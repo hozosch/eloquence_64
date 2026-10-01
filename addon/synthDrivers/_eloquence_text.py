@@ -11,19 +11,23 @@ pause_re = re.compile(r"([a-zA-Z0-9]|\s)([,.:;?!)])(\2*?)(\s|[\\/]|$|$)")
 time_re = re.compile(r"(\d):(\d+):(\d+)")
 punctuation = b",.?:;)(?!"
 
-_ENGINE_ENCODINGS = MappingProxyType({
-	393216: "gb18030",
-	524288: "cp932",
-	655360: "cp949",
-})
+_ENGINE_ENCODINGS = MappingProxyType(
+	{
+		393216: "gb18030",
+		524288: "cp932",
+		655360: "cp949",
+	}
+)
 
-_BREAK_FACTORS = MappingProxyType({
-	10: 1,
-	43: 2,
-	60: 3,
-	75: 4,
-	85: 5,
-})
+_BREAK_FACTORS = MappingProxyType(
+	{
+		10: 1,
+		43: 2,
+		60: 3,
+		75: 4,
+		85: 5,
+	}
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,9 @@ class BuildOptions:
 	backquote_tags: bool
 	abbreviation_dict: bool
 	phrase_prediction: bool
+	# Set only for the in-process openevv backend, which mispronounces a bracket
+	# that whitespace separates from its text.  See attach_spaced_brackets().
+	attach_spaced_brackets: bool = False
 
 
 def _engine_encode(text: str, voice_id) -> bytes:
@@ -56,6 +63,11 @@ def build(text: str, voice_id: int, options: BuildOptions) -> bytes:
 	except (TypeError, ValueError):
 		pass
 	text = _text_preprocessing.preprocess(text, voice_id)
+	# Before any backquote command is added, so the rewrite only ever sees user
+	# text.  Skipped in raw backquote-tag mode, where the author is addressing the
+	# engine directly and spacing may be deliberate.
+	if options.attach_spaced_brackets and not options.backquote_tags:
+		text = _text_preprocessing.attach_spaced_brackets(text)
 	if not options.backquote_tags:
 		text = text.replace("`", " ")
 	text = f"`vv{options.volume} {text}"

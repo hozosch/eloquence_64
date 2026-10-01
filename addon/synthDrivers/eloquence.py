@@ -4,8 +4,8 @@
 import gui
 import wx
 import ctypes
+import dataclasses
 import winsound
-import shutil  # Added for Copy Helper tool
 
 try:
 	from speech import (
@@ -63,8 +63,8 @@ from synthDriverHandler import (
 )
 from . import _eloquence
 from . import _eloquence_text
+from ._background_work import BackgroundWork
 from collections import OrderedDict
-import unicodedata
 import addonHandler
 
 addonHandler.initTranslation()
@@ -125,6 +125,34 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 		try:
 			sHelper = gui.guiHelper.BoxSizerHelper(self, sizer=settings)
 
+			# Engine selection.  Changing this takes effect when the synthesizer is
+			# next loaded, because an engine is chosen while opening it.
+			self.openevvCheckbox = sHelper.addItem(
+				wx.CheckBox(
+					self,
+					# Translators: Label of a checkbox in the Eloquence category of the settings dialog
+					label=_("Use the 64-bit openevv engine where it supports the language"),
+				)
+			)
+			self.openevvCheckbox.SetValue(bool(_eloquence.openevv_enabled()))
+			openevv_version = _eloquence.openevv_version()
+			if not _eloquence.openevv_available():
+				self.openevvCheckbox.Disable()
+				# Translators: Shown when the openevv engine is missing from the add-on.
+				openevv_status = _("The openevv engine is not present in this add-on.")
+			else:
+				openevv_status = _(
+					# Translators: Explains the openevv engine option. {version} is a release
+					# tag such as v0.3.
+					"openevv {version} runs inside NVDA, with no helper process. "
+					"It is used only with the original 11 kHz sample rate and currently "
+					"supports English only; other sample rates and languages fall back to "
+					"the 32-bit helper automatically. Pronunciation dictionaries are "
+					"not supported by openevv and apply only to the helper. "
+					"Takes effect when the synthesizer is next loaded."
+				).format(version=openevv_version or _("unknown version"))
+			sHelper.addItem(wx.StaticText(self, label=openevv_status))
+
 			self.dictionarySources = {
 				"https://github.com/mohamed00/AltIBMTTSDictionaries": "Alternative IBM TTS Dictionaries",
 				"https://github.com/eigencrow/IBMTTSDictionaries": "IBM TTS Dictionaries",
@@ -140,7 +168,8 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 				config.conf.get("eloquence", {}).get("dictionary_name", "Alternative IBM TTS Dictionaries")
 			)
 
-			self.updateButton = sHelper.addItem(wx.Button(self, label=_("Check for updates")))
+			# Translators: Button that downloads and applies updates to the selected Eloquence dictionaries.
+			self.updateButton = sHelper.addItem(wx.Button(self, label=_("Update Dictionaries")))
 			self.Bind(wx.EVT_BUTTON, self.onUpdate, self.updateButton)
 			# When NVDA is running in secure mode, one should not be able to save any setting to disk.
 			if globalVars.appArgs.secure:
@@ -169,11 +198,13 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 			# Panel creation failed, but don't crash - synth will still work
 
 	def onCopyHelper(self, evt):
-		"""Copies the 32-bit helper with UAC elevation and definitive feedback."""
+		"""Copies the Eloquence Host Process with UAC elevation and definitive feedback.
+
+		The host ships as a PyInstaller onedir tree and resolves its ``_internal``
+		directory relative to the executable, so the whole directory has to go
+		across -- copying the .exe on its own leaves a host that cannot start.
+		"""
 		source_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "eloquence_host32"))
-		source_file = os.path.normpath(os.path.join(os.path.dirname(__file__), "eloquence_host32.exe"))
-		onedir_exe = os.path.join(source_dir, "eloquence_host32.exe")
-		use_onedir = os.path.isfile(onedir_exe)
 		prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
 		target_addon_dir = os.path.normpath(
 			os.path.join(prog_files, "NVDA", "systemConfig", "addons", "Eloquence")
@@ -193,35 +224,24 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 			return
 
 		dest_dir = os.path.normpath(os.path.join(target_addon_dir, "synthDrivers"))
-		dest_file = os.path.normpath(os.path.join(dest_dir, "eloquence_host32.exe"))
-		dest_helper_dir = os.path.normpath(os.path.join(dest_dir, "eloquence_host32"))
+		dest_host_dir = os.path.normpath(os.path.join(dest_dir, "eloquence_host32"))
 
-		if not use_onedir and not os.path.exists(source_file):
+		if not os.path.isdir(source_dir):
 			wx.MessageBox(
 				# Translators: Text of a message dialog when copying the helper to system config
-				_("32-bit helper not found in:\n{source_dir}").format(
-					source_dir=os.path.dirname(__file__)
-				),
+				_("Source folder not found at:\n{source_dir}").format(source_dir=source_dir),
 				# Translators: Title of a message dialog when copying the helper to system config
 				_("Error"),
 				wx.OK | wx.ICON_ERROR,
 			)
 			return
 
-		# Prepare elevated command: ensure the destination exists and copy either
-		# the fast onedir host or the legacy onefile fallback.
-		if use_onedir:
-			cmd_params = (
-				f'/c mkdir "{dest_dir}" 2>nul & '
-				f'rmdir /s /q "{dest_helper_dir}" 2>nul & '
-				f'xcopy /e /i /y "{source_dir}" "{dest_helper_dir}" >nul'
-			)
-		else:
-			cmd_params = (
-				f'/c mkdir "{dest_dir}" 2>nul & '
-				f'rmdir /s /q "{dest_helper_dir}" 2>nul & '
-				f'copy /y "{source_file}" "{dest_file}"'
-			)
+		# Replace the whole onedir tree so stale PyInstaller files cannot survive an update.
+		cmd_params = (
+			f'/c mkdir "{dest_dir}" 2>nul & '
+			f'rmdir /s /q "{dest_host_dir}" 2>nul & '
+			f'xcopy /E /I /Y "{source_dir}" "{dest_host_dir}" >nul'
+		)
 
 		try:
 			# Triggering UAC Elevation using ShellExecuteW's "runas" verb
@@ -232,8 +252,8 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 				winsound.MessageBeep(winsound.MB_ICONASTERISK)
 				wx.MessageBox(
 					_(
-						# Translators: text of a message dialog when copying the helper to system config
-						"Successfully copied the 32-bit Eloquence helper to systemConfig!\n\nEloquence should now load normally on logon screen, start-up, and other secure screens."
+					# Translators: text of a message dialog when copying the helper to system config
+						"Successfully copied the Eloquence helper to systemConfig!\n\nEloquence should now load normally on logon screen, start-up, and other secure screens."
 					),
 					# Translators: Title of a message dialog when copying the helper to system config
 					_("Success"),
@@ -269,165 +289,124 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 
 	def onCheckAddonUpdate(self, evt):
 		"""Check for and apply addon updates from GitHub"""
-		import sys
-		import os
-
-		# Import the update manager
-		addon_dir = os.path.abspath(os.path.dirname(__file__))
-		update_manager_path = os.path.join(addon_dir, "_eloquence_updater.py")
-
-		# Check if updater exists
-		if not os.path.exists(update_manager_path):
-			wx.MessageBox(
-				# Translators: Text of a message dialog when updating the add-on
-				_("Update manager not found. Please reinstall the add-on."),
-				# Translators: Title of a message dialog when updating the add-on
-				_("Error"),
-				wx.OK | wx.ICON_ERROR,
-			)
-			return
-
-		# Import update manager
-		sys.path.insert(0, addon_dir)
 		try:
-			from _eloquence_updater import EloquenceUpdateManager
-		except ImportError as e:
-			wx.MessageBox(
-				# Translators: Text of a message dialog when updating the add-on
-				_("Failed to load update manager: {e}").format(e=e),
-				# Translators: Title of a message dialog when updating the add-on
-				_("Error"),
-				wx.OK | wx.ICON_ERROR,
-			)
-			return
-		finally:
-			if addon_dir in sys.path:
-				sys.path.remove(addon_dir)
+			from . import _eloquence_updater
 
-		# Create progress dialog
-		progress = wx.ProgressDialog(
+			manager = _eloquence_updater.EloquenceUpdateManager(os.path.abspath(os.path.dirname(__file__)))
+		except Exception as e:
+			self._reportAddonUpdateError(e)
+			return
+
+		BackgroundWork(
+			self,
 			# Translators: Title of a progress dialog when updating the add-on
 			_("Checking for Updates"),
 			# Translators: Message of a progress dialog when updating the add-on
-			_("Connecting to GitHub..."),
-			maximum=100,
-			parent=self,
-			style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
+			_("Checking for updates..."),
+			lambda is_cancelled, report: manager.check_for_updates(),
+			lambda update, cancelled: self._onAddonUpdateChecked(manager, cancelled, *update),
+			self._reportAddonUpdateError,
 		)
 
-		try:
-			# Initialize update manager
-			manager = EloquenceUpdateManager(addon_dir)
-
-			# Check for updates
-			# Translators: Message of a progress dialog when updating the add-on
-			progress.Update(10, _("Checking for updates..."))
-			(
-				has_update,
-				latest_version,
-				download_url,
-				changelog,
-			) = manager.check_for_updates()
-
-			if not has_update:
-				# Translators: Message of a progress dialog when updating the add-on
-				progress.Update(100, _("No updates available"))
-				progress.Destroy()
-				wx.MessageBox(
-					# Translators: Text of a message dialog when updating the add-on
-					_("You are using the latest version!"),
-					# Translators: Title of a message dialog when updating the add-on
-					_("Up to Date"),
-					wx.OK | wx.ICON_INFORMATION,
-				)
-				return
-
-			# Show changelog
-			# Translators: Text of a message dialog when updating the add-on
-			progress.Update(20, _("Update available!"))
-			progress.Destroy()
-
-			changelog_dialog = wx.MessageDialog(
-				self,
-				_(
-					# Translators: Text of a message dialog when updating the add-on
-					"New version available: {latest_version}\n\n"
-					"Current version: {currVersion}\n\n"
-					"Changelog:\n{changelog}\n\n"
-					"Would you like to download and review the update?"
-				).format(
-					latest_version=latest_version,
-					currVersion=manager.CURRENT_VERSION,
-					changelog=changelog[:500],
-				),
-				# Translators: Title of a message dialog when updating the add-on
-				_("Update Available"),
-				wx.YES_NO | wx.ICON_INFORMATION,
-			)
-
-			if changelog_dialog.ShowModal() != wx.ID_YES:
-				return
-
-			# Download update
-			progress = wx.ProgressDialog(
-				# Translators: Text of a progress dialog when updating the add-on
-				_("Downloading Update"),
-				# Translators: Title of a progress dialog when updating the add-on
-				_("Downloading..."),
-				maximum=100,
-				parent=self,
-				style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
-			)
-
-			def download_progress(percent, message):
-				cont, skip = progress.Update(percent, message)
-				return cont
-
-			addon_path = manager.download_update(download_url, download_progress)
-			progress.Update(100, _("Download complete"))
-			progress.Destroy()
-
-			progress = wx.ProgressDialog(
-				# Translators: Text of a progress dialog when updating the add-on
-				_("Installing Update"),
-				# Translators: Text of a progress dialog when updating the add-on
-				_("Please wait..."),
-				maximum=100,
-				parent=self,
-				style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
-			)
-			progress.Pulse(_("Installing add-on package..."))
-			if not manager.install_update(addon_path, self):
-				progress.Destroy()
-				manager.cleanup()
-				wx.MessageBox(
-					# Translators: Text of a message dialog when updating the add-on
-					_("Update cancelled."),
-					# Translators: Text of a message dialog when updating the add-on
-					_("Cancelled"),
-					wx.OK | wx.ICON_INFORMATION,
-				)
-				return
-			progress.Destroy()
-			manager.cleanup()
-			manager.prompt_for_restart()
-
-		except Exception as e:
-			progress.Destroy()
-			log.error(f"Update failed: {e}")
+	def _onAddonUpdateChecked(self, manager, cancelled, has_update, latest_version, download_url, changelog):
+		if cancelled:
+			self._reportAddonUpdateCancelled()
+			return
+		if not has_update:
 			wx.MessageBox(
-				_(
-					# Translators: Text of a message dialog when updating the add-on
-					"Update failed: {e}\n\nYour addon has not been modified."
-				).format(e=str(e)),
+				# Translators: Text of a message dialog when updating the add-on
+				_("You are using the latest version!"),
 				# Translators: Title of a message dialog when updating the add-on
-				_("Update Failed"),
-				wx.OK | wx.ICON_ERROR,
+				_("Up to Date"),
+				wx.OK | wx.ICON_INFORMATION,
 			)
+			return
+
+		changelog_dialog = wx.MessageDialog(
+			self,
+			_(
+				# Translators: Text of a message dialog when updating the add-on
+				"New version available: {latest_version}\n\n"
+				"Current version: {currVersion}\n\n"
+				"Changelog:\n{changelog}\n\n"
+				"Would you like to download and review the update?"
+			).format(
+				latest_version=latest_version,
+				currVersion=manager.CURRENT_VERSION,
+				changelog=changelog[:500],
+			),
+			# Translators: Title of a message dialog when updating the add-on
+			_("Update Available"),
+			wx.YES_NO | wx.ICON_INFORMATION,
+		)
+
+		if changelog_dialog.ShowModal() != wx.ID_YES:
+			return
+
+		BackgroundWork(
+			self,
+			# Translators: Text of a progress dialog when updating the add-on
+			_("Downloading Update"),
+			# Translators: Title of a progress dialog when updating the add-on
+			_("Downloading..."),
+			lambda is_cancelled, report: manager.download_update(download_url, report, is_cancelled),
+			lambda addon_path, cancelled: self._installAddonUpdate(manager, addon_path, cancelled),
+			self._reportAddonUpdateError,
+			# Translators: The download has finished; closing this dialog continues the add-on installation.
+			doneMessage=_(
+				"Download complete. You can now close this dialog to continue installing the update."
+			),
+		)
+
+	def _installAddonUpdate(self, manager, addon_path, cancelled):
+		"""Hands the downloaded Add-on Package to NVDA's installer, which must run on the UI thread."""
+		if cancelled:
+			manager.cleanup()
+			self._reportAddonUpdateCancelled()
+			return
+		try:
+			installed = manager.install_update(addon_path, self)
+		except Exception as e:
+			self._reportAddonUpdateError(e)
+			return
+		finally:
+			manager.cleanup()
+		if not installed:
+			self._reportAddonUpdateCancelled()
+			return
+		manager.prompt_for_restart()
+
+	def _reportAddonUpdateCancelled(self):
+		wx.MessageBox(
+			# Translators: Text of a message dialog when updating the add-on
+			_("Update cancelled."),
+			# Translators: Text of a message dialog when updating the add-on
+			_("Cancelled"),
+			wx.OK | wx.ICON_INFORMATION,
+		)
+
+	def _reportAddonUpdateError(self, e):
+		from . import _eloquence_updater
+
+		if isinstance(e, _eloquence_updater.UpdateCancelled):
+			self._reportAddonUpdateCancelled()
+			return
+		log.error(f"Update failed: {e}")
+		wx.MessageBox(
+			_(
+				# Translators: Text of a message dialog when updating the add-on
+				"Update failed: {e}\n\nYour addon has not been modified."
+			).format(e=str(e)),
+			# Translators: Title of a message dialog when updating the add-on
+			_("Update Failed"),
+			wx.OK | wx.ICON_ERROR,
+		)
 
 	def onSave(self):
 		if "eloquence" not in config.conf:
 			config.conf["eloquence"] = {}
+		if self.openevvCheckbox.IsEnabled():
+			config.conf["eloquence"]["use_openevv"] = self.openevvCheckbox.GetValue()
 		selection = self.dictionaryChoice.GetStringSelection()
 		for url, name in self.dictionarySources.items():
 			if name == selection:
@@ -436,9 +415,7 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 				break
 
 	def onUpdate(self, evt):
-		import urllib.request
-		import zipfile
-		import os
+		from . import _dictionary_update
 
 		self.onSave()
 		dictionary_url = config.conf.get("eloquence", {}).get("dictionary_url")
@@ -452,232 +429,84 @@ class EloquenceSettingsPanel(gui.settingsDialogs.SettingsPanel):
 			)
 			return
 
-		try:
-			# Add /archive/master.zip to the end of the URL to download the master branch
-			zip_url = dictionary_url + "/archive/master.zip"
-			zip_path, _unused = urllib.request.urlretrieve(zip_url)
+		dictionary_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "eloquence")
+		stage_messages = {
+			# Translators: Message of a progress dialog when updating a dictionary
+			_dictionary_update.UpdateStage.DOWNLOADING: _("Downloading dictionaries..."),
+			# Translators: Message of a progress dialog when updating a dictionary
+			_dictionary_update.UpdateStage.MERGING: _("Merging dictionaries..."),
+		}
 
-			addon_dir = os.path.abspath(os.path.dirname(__file__))
-			dest_folder = os.path.join(addon_dir, "eloquence")
+		BackgroundWork(
+			self,
+			# Translators: Title of a progress dialog when updating a dictionary
+			_("Updating Dictionaries"),
+			stage_messages[_dictionary_update.UpdateStage.DOWNLOADING],
+			lambda is_cancelled, report: _dictionary_update.update_dictionaries(
+				dictionary_url,
+				dictionary_dir,
+				is_cancelled,
+				lambda stage: report(None, stage_messages[stage]),
+			),
+			self._reportDictionaryUpdate,
+			self._reportDictionaryUpdateError,
+		)
 
-			if not os.path.exists(dest_folder):
-				os.makedirs(dest_folder)
-
-			with zipfile.ZipFile(zip_path, "r") as zip_ref:
-				zip_ref.extractall(addon_dir)
-				zip_contents = zip_ref.namelist()
-				extracted_root_name = zip_contents[0].split("/")[0]
-				extracted_folder_path = os.path.join(addon_dir, extracted_root_name)
-
-			updates_count = 0
-
-			# --- HELPER: Ensure CP1252 compatibility ---
-			def clean_key_text(text):
-				try:
-					text.encode("cp1252")
-					return text
-				except UnicodeEncodeError:
-					# If not CP1252, fallback to stripping accents
-					return "".join(
-						c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
-					)
-
-			# --- HELPER: Extract Key/Word only (Cleaned) ---
-			def get_key(line):
-				parts = line.strip().split(None, 1)
-				if parts:
-					raw_key = parts[0].lower()
-					return clean_key_text(raw_key)  # Return CP1252-safe key
-				return None
-
-			# --- HELPER: Normalize Format (Space to Tab + Clean ALL text) ---
-			def normalize_entry_format(line):
-				line = line.strip()
-				if " [" in line and "\t[" not in line:
-					parts = line.split(" [", 1)
-					if len(parts) == 2:
-						word_part = parts[0].strip()
-						pronunciation_part = parts[1]
-						# Clean BOTH the word and pronunciation to ensure CP1252 compatibility
-						clean_word = clean_key_text(word_part)
-						clean_pronunciation = clean_key_text(pronunciation_part)
-						return f"{clean_word}\t[{clean_pronunciation}"
-
-				# Even if it's already tabbed, ensure ALL text is CP1252-safe
-				if "\t[" in line:
-					parts = line.split("\t[", 1)
-					if len(parts) == 2:
-						word_part = parts[0].strip()
-						pronunciation_part = parts[1]
-						# Clean BOTH parts
-						clean_word = clean_key_text(word_part)
-						clean_pronunciation = clean_key_text(pronunciation_part)
-						return f"{clean_word}\t[{clean_pronunciation}"
-
-				# If no bracket format, just clean the whole line
-				return clean_key_text(line)
-
-			# --- MAIN LOGIC ---
-			if os.path.exists(extracted_folder_path):
-				candidates = []
-				for root, dirs, files in os.walk(extracted_folder_path):
-					for f in files:
-						if f.lower().endswith(".dic"):
-							full_path = os.path.join(root, f)
-							candidates.append((full_path, f))
-
-				processed_filenames = set()
-				encodings_to_try = ["utf-8", "cp1252", "iso-8859-1", "cp437"]
-
-				for source_path, filename in candidates:
-					dest_path = os.path.join(dest_folder, filename)
-
-					# Auto-create new dictionary files with CP1252-safe content
-					if not os.path.exists(dest_path):
-						try:
-							# Read source file with encoding detection
-							source_lines = []
-							read_success = False
-							for enc in encodings_to_try:
-								try:
-									with open(source_path, "r", encoding=enc) as f:
-										source_lines = f.readlines()
-										read_success = True
-										break
-								except UnicodeDecodeError:
-									continue
-
-							if not read_success:
-								with open(source_path, "r", encoding="iso-8859-1", errors="replace") as f:
-									source_lines = f.readlines()
-
-							# Process and strip accents from all lines
-							processed_lines = []
-							for line in source_lines:
-								normalized_line = normalize_entry_format(line)
-								if normalized_line.strip():  # Skip empty lines
-									processed_lines.append(normalized_line)
-
-							# Write as CP1252
-							with open(dest_path, "w", encoding="cp1252") as f:
-								for line in processed_lines:
-									f.write(f"{line}\n")
-
-							updates_count += len(processed_lines)
-							log.info(
-								f"Created new dictionary file: {filename} ({len(processed_lines)} entries, CP1252-safe)"
-							)
-						except Exception as e:
-							log.error(f"Failed to create new dictionary {filename}: {e}")
-						continue
-
-					if filename.lower() in processed_filenames:
-						continue
-					processed_filenames.add(filename.lower())
-
-					lines_to_append = []
-					try:
-						# 1. READ LOCAL: Extract CLEAN KEYS
-						existing_keys = set()
-
-						def load_local_keys(f_handle):
-							for line in f_handle:
-								key = get_key(line)
-								if key:
-									existing_keys.add(key)
-
-						try:
-							# Try CP1252 first as it is the standard for dictionaries
-							with open(dest_path, "r", encoding="cp1252") as f:
-								load_local_keys(f)
-						except UnicodeDecodeError:
-							# Fallback if it was previously written in a different encoding
-							try:
-								with open(dest_path, "r", encoding="utf-8") as f:
-									load_local_keys(f)
-							except UnicodeDecodeError:
-								with open(dest_path, "r", encoding="mbcs", errors="ignore") as f:
-									load_local_keys(f)
-
-						# 2. READ SOURCE WITH AUTO-DETECT
-						source_lines = []
-						read_success = False
-						for enc in encodings_to_try:
-							try:
-								with open(source_path, "r", encoding=enc) as f:
-									source_lines = f.readlines()
-									read_success = True
-									break
-							except UnicodeDecodeError:
-								continue
-
-						if not read_success:
-							with open(source_path, "r", encoding="iso-8859-1", errors="replace") as f:
-								source_lines = f.readlines()
-
-						# 3. FILTER, CLEAN, & FORMAT
-						for line in source_lines:
-							# This cleans the visual word and normalizes spaces while preserving CP1252 accents
-							normalized_line = normalize_entry_format(line)
-
-							# Extract the clean key for comparison
-							key = get_key(normalized_line)
-
-							if not key:
-								continue
-
-							# Check duplicates using the key
-							if key not in existing_keys:
-								lines_to_append.append(normalized_line)
-								existing_keys.add(key)
-
-						# 4. WRITE UPDATES (Strictly CP1252)
-						if lines_to_append:
-							with open(dest_path, "a", encoding="cp1252") as f:
-								for item in lines_to_append:
-									f.write(f"{item}\n")
-							updates_count += len(lines_to_append)
-
-					except Exception as e:
-						log.error(f"Failed to merge dictionary {filename}: {e}")
-
-				shutil.rmtree(extracted_folder_path)
-
-			os.remove(zip_path)
-
-			if updates_count > 0:
-				# Count how many were new files vs updated entries
-				new_files = sum(1 for f in os.listdir(dest_folder) if f.lower().endswith(".dic"))
-				wx.MessageBox(
-					_(
-						# Translators: Text of a message dialog when updating a dictionary
-						"Dictionary update successful!\n\n"
-						"• Total updates: {updates_count}\n"
-						"• Dictionary files: {new_files}\n\n"
-						"Note: CP1252 encoding enforced; some accents may have been stripped for compatibility."
-					).format(updates_count=updates_count, new_files=new_files),
-					# Translators: Title of a message dialog when updating a dictionary
-					_("Success"),
-					wx.OK | wx.ICON_INFORMATION,
+	def _reportDictionaryUpdate(self, result, cancelled):
+		# result.cancelled says whether the update itself stopped early; a late Cancel press changed nothing.
+		paragraphs = []
+		if result.changed:
+			paragraphs.append(
+				# Translators: Part of the message shown after a dictionary update
+				_("Entries added: {entries}\nDictionary files changed: {files}").format(
+					entries=result.entries_added, files=len(result.changed)
 				)
-			else:
-				wx.MessageBox(
-					# Translators: Text of a message dialog when updating a dictionary
-					_("No new updates found. Your dictionaries are already up to date."),
-					# Translators: Title of a message dialog when updating a dictionary
-					_("Eloquence"),
-					wx.OK | wx.ICON_INFORMATION,
-				)
-
-		except Exception as e:
-			wx.MessageBox(
-				# Translators: Text of a message dialog when updating a dictionary
-				_("An error occurred while updating the dictionary: {e}").format(e=e),
-				# Translators: Title of a message dialog when updating a dictionary
-				_("Error"),
-				wx.OK | wx.ICON_ERROR,
 			)
-		pass
+			# Translators: Part of the message shown after a dictionary update
+			paragraphs.append(_("The new entries take effect the next time Eloquence starts."))
+		if result.failed:
+			paragraphs.append(
+				# Translators: Part of the message shown after a dictionary update. A list of files follows.
+				_("These dictionary files could not be updated:")
+				+ "".join(f"\n{outcome.filename}: {outcome.error}" for outcome in result.failed)
+			)
+
+		if result.cancelled:
+			# Translators: Part of the message shown after a dictionary update
+			summary = _("Dictionary update cancelled.")
+			# Translators: Title of a message dialog when updating a dictionary
+			title, icon = _("Cancelled"), wx.ICON_INFORMATION
+		elif result.failed and not result.changed:
+			# Translators: Part of the message shown after a dictionary update
+			summary = _("Dictionary update failed.")
+			# Translators: Title of a message dialog when updating a dictionary
+			title, icon = _("Error"), wx.ICON_ERROR
+		elif result.failed:
+			# Translators: Part of the message shown after a dictionary update
+			summary = _("Dictionary update finished, but some files failed.")
+			# Translators: Title of a message dialog when updating a dictionary
+			title, icon = _("Eloquence"), wx.ICON_WARNING
+		elif result.changed:
+			# Translators: Part of the message shown after a dictionary update
+			summary = _("Dictionary update successful!")
+			# Translators: Title of a message dialog when updating a dictionary
+			title, icon = _("Success"), wx.ICON_INFORMATION
+		else:
+			# Translators: Text of a message dialog when updating a dictionary
+			summary = _("No new updates found. Your dictionaries are already up to date.")
+			# Translators: Title of a message dialog when updating a dictionary
+			title, icon = _("Eloquence"), wx.ICON_INFORMATION
+		wx.MessageBox("\n\n".join([summary, *paragraphs]), title, wx.OK | icon)
+
+	def _reportDictionaryUpdateError(self, e):
+		log.error(f"Dictionary update failed: {e}")
+		wx.MessageBox(
+			# Translators: Text of a message dialog when updating a dictionary
+			_("An error occurred while updating the dictionary: {e}").format(e=e),
+			# Translators: Title of a message dialog when updating a dictionary
+			_("Error"),
+			wx.OK | wx.ICON_ERROR,
+		)
 
 
 class SynthDriver(synthDriverHandler.SynthDriver):
@@ -907,6 +736,11 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		pending_indexes = []
 		queued_speech = False
 		options = self._build_options()
+		# The openevv bracket workaround is per fragment, because a mixed-language
+		# utterance can cross backends mid-sentence and the proprietary engine must
+		# not get the rewrite.  Both variants are built once here rather than per
+		# fragment.
+		direct_options = dataclasses.replace(options, attach_spaced_brackets=True)
 		sequence_voice = getattr(self, "_defaultVoice", str(_eloquence.params.get(9, 65536)))
 		last_queued_engine_voice = getattr(self, "_lastEngineVoice", None)
 
@@ -928,7 +762,12 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		for item in speechSequence:
 			if isinstance(item, str):
 				s = str(item)
-				s = _eloquence_text.build(s, voice_id=sequence_voice, options=options)
+				fragment_options = (
+					direct_options
+					if _eloquence.voice_uses_direct_backend(sequence_voice)
+					else options
+				)
+				s = _eloquence_text.build(s, voice_id=sequence_voice, options=fragment_options)
 				outlist.append((_eloquence.speak, (s,)))
 				last = s
 				queued_speech = True
@@ -1001,7 +840,7 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		outlist.append((_eloquence.index, (0xFFFF,)))
 		outlist.append((_eloquence.synth, ()))
 		self._lastEngineVoice = last_queued_engine_voice
-		seq = _eloquence._client._sequence
+		seq = _eloquence.current_generation()
 		_eloquence.synth_queue.put((outlist, seq))
 		_eloquence.process()
 
@@ -1056,37 +895,16 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		self._schedule_presence_contour_visibility_update()
 		_eloquence.persist_rate_mode(val)
 
-		# Entering/leaving native 16 kHz changes the already-loaded SYN modules.
-		# Reload only the 32-bit Eloquence host so NVDA itself does not need a restart.
-		nativeModes = tuple(m for m in _eloquence._ECI_BASE_RATE_MAP if m >= 2)
-		# Any change involving a native-16 variant requires reloading the host,
-		# because the SYN binary itself changes.
-		if oldVal != val and (oldVal in nativeModes or val in nativeModes):
+		# v22 shares one audio pipeline between the proprietary host and openevv.
+		# Every rate change therefore restarts the pipeline as well as the active
+		# backend, keeping the WavePlayer format and engine output in lockstep.
+		if oldVal != val:
 			try:
 				self.cancel()
 				_eloquence.restart_for_sample_rate(val, self._onIndexReached, getattr(self, "_variant", "1"))
-				log.info("Eloquence host reloaded for sample-rate mode %d", val)
+				log.info("Eloquence backends reloaded for sample-rate mode %d", val)
 			except Exception:
-				log.exception("Failed to reload Eloquence host for sample-rate change")
-			return
-
-		# 8/11 share the pristine engines and can switch without reloading the host.
-		_eloquence.set_sample_rate(val)
-		client = _eloquence._client
-		if not client:
-			return
-		self.cancel()
-		if client._audio_worker:
-			client._audio_worker.stop()
-			client._audio_worker.join(timeout=1)
-			client._audio_worker = None
-		if client._player:
-			try:
-				client._player.close()
-			except Exception:
-				log.exception("WavePlayer close failed")
-			client._player = None
-		client.initialize_audio()
+				log.exception("Failed to reload Eloquence for sample-rate change")
 
 	def _get_sampleRate(self):
 		return str(self._sample_rate)
