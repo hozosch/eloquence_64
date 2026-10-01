@@ -487,7 +487,7 @@ class AudioPipeline:
 		if self.player:
 			try:
 				self.player.close()
-				except Exception:
+			except Exception:
 				LOGGER.exception("WavePlayer close failed")
 			self.player = None
 		# A rate switch creates a new worker.  Do not let its first read see the

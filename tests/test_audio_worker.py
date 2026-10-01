@@ -98,7 +98,7 @@ class SampleRateModeTests(unittest.TestCase):
 		module = _load_client_module()
 		module._current_sample_rate_mode = 4
 		events = []
-		worker = module.AudioWorker(FakePlayer(events), queue.Queue(), FakeClient())
+		worker = module.AudioWorker(FakePlayer(events), queue.Queue(), FakePipeline())
 		data = b"\x00\x00\x34\x12\xff\x7f"
 		worker._feed_audio(data, None, False)
 		self.assertEqual(events, [("feed", data)])
@@ -172,11 +172,11 @@ class AudioWorkerTests(unittest.TestCase):
 	def test_audio_worker_uses_a_two_millisecond_fade_at_the_current_rate(self):
 		module = _load_client_module()
 		module._current_sample_rate_mode = 4
-		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
+		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakePipeline())
 		self.assertEqual(worker._start_fade_samples, 32)
 
 		module._current_sample_rate_mode = 1
-		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakeClient())
+		worker = module.AudioWorker(FakePlayer([]), queue.Queue(), FakePipeline())
 		self.assertEqual(worker._start_fade_samples, 22)
 
 	def test_new_sequence_restarts_the_start_fade(self):
@@ -188,7 +188,7 @@ class AudioWorkerTests(unittest.TestCase):
 		audio_queue.put((b"", None, False, 1))
 		audio_queue.put(None)
 
-		module.AudioWorker(FakePlayer(events), audio_queue, FakeClient()).run()
+		module.AudioWorker(FakePlayer(events), audio_queue, FakePipeline()).run()
 
 		feeds = [data for event, data in events if event == "feed"]
 		self.assertEqual(len(feeds), 2)
